@@ -3,7 +3,7 @@
 APEX Progress Portal is a small read-only web app for reviewing endurance
 training and nutrition progress online. It combines a React frontend with a
 FastAPI backend that reads the same Supabase/Postgres data already used by the
-main APEX app, while reusing `user_profiles` context from the APEX MCP setup.
+`apex-mcp-server` project.
 
 The goal is to keep the experience simple: open the portal, review the latest
 tracked day, inspect past logs, and track how fuelling and training are
@@ -26,10 +26,9 @@ evolving over time.
 - Deploys as one Vercel project with:
   - `frontend/` at `/`
   - `backend/` at `/api`
-- Reads directly from the APEX Supabase/Postgres tables:
-  `users`, `goals`, `daily_nutrition_targets`, `meal_logs`,
-  `meal_ingredients`, and `activities`.
-- Reuses `user_profiles` for profile context when it is available.
+- Reads directly from the MCP wellness tables:
+  `user_profiles`, `daily_targets`, `daily_meals`, `meal_items`, and
+  `activity_entries`.
 
 ### Out Of Scope
 
@@ -107,17 +106,14 @@ to `backend/.env.local`.
 Required:
 
 - `DATABASE_URL` or `APEX_DATABASE_URL`
-  Supabase/Postgres connection string. The recommended production input is the
-  Supabase transaction pooler URL.
+  Postgres connection string for the `apex-mcp-server` database. The simplest
+  local default matches that repo's Docker setup:
+  `postgresql://apex:apex@127.0.0.1:54329/apex_mcp_server`.
 - `APEX_PORTAL_SUBJECT`
   The MCP/Supabase subject whose progress should be shown in the portal.
 
 Recommended:
 
-- `APEX_PORTAL_USER_ID`
-  Explicit `users.id` value from the APEX app schema. When omitted, the
-  backend auto-resolves the user only when the database contains exactly one
-  athlete row.
 - `APEX_PORTAL_ACCESS_TOKEN`
   Optional simple access token required by the API and unlock screen. This is
   the recommended production privacy guard for the single-athlete portal.
@@ -169,7 +165,6 @@ cd ..
 npx vercel link
 npx vercel env add DATABASE_URL
 npx vercel env add APEX_PORTAL_SUBJECT
-npx vercel env add APEX_PORTAL_USER_ID
 npx vercel env add APEX_PORTAL_ACCESS_TOKEN
 npx vercel --prod
 ```
@@ -180,8 +175,8 @@ root is enough.
 ## Contributing / Development Notes
 
 - Keep the backend read-only unless a current product need requires writes.
-- Keep the portal queries aligned with the APEX app tables first, and only use
-  `user_profiles` as optional profile context.
+- Keep the portal queries aligned with the `apex-mcp-server` tables and daily
+  summary semantics.
 - Update this README and
   [docs/APEX_PORTAL_IMPLEMENTATION.md](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/docs/APEX_PORTAL_IMPLEMENTATION.md)
   whenever setup, API behavior, or deployment changes.

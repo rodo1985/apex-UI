@@ -12,7 +12,6 @@ class Settings(BaseSettings):
     Parameters:
         database_url: Postgres connection string for the Supabase-backed schema.
         portal_subject: Subject whose data should be shown in the portal.
-        portal_user_id: Optional APEX app user id bound to the portal.
         portal_access_token: Optional bearer token required by the read API.
         allowed_origins_raw: Comma-separated list of local/dev browser origins.
         portal_timezone: IANA timezone used to resolve the default business day.
@@ -43,10 +42,6 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("APEX_DATABASE_URL", "DATABASE_URL")
     )
     portal_subject: str = Field(validation_alias="APEX_PORTAL_SUBJECT")
-    portal_user_id: str | None = Field(
-        default=None,
-        validation_alias="APEX_PORTAL_USER_ID",
-    )
     portal_access_token: str | None = Field(
         default=None,
         validation_alias="APEX_PORTAL_ACCESS_TOKEN",

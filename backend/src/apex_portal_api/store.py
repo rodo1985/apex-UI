@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
 import asyncpg
@@ -76,12 +76,11 @@ class PortalStore(ABC):
 
 
 class PostgresPortalStore(PortalStore):
-    """Read portal data from the APEX Supabase/Postgres application schema.
+    """Read portal data from the APEX MCP Postgres schema.
 
     Parameters:
         database_url: Asyncpg-compatible Postgres connection string.
         athlete_name_override: Optional display-name override for the profile.
-        portal_user_id: Optional explicit APEX `users.id` binding.
 
     Returns:
         PostgresPortalStore: Query helper used by the FastAPI routes.
@@ -99,14 +98,12 @@ class PostgresPortalStore(PortalStore):
         self,
         database_url: str,
         athlete_name_override: str | None = None,
-        portal_user_id: str | None = None,
     ) -> None:
         """Store connection details for later lazy pool creation.
 
         Parameters:
             database_url: Asyncpg-compatible Postgres connection string.
             athlete_name_override: Optional display-name override.
-            portal_user_id: Optional explicit APEX `users.id` binding.
 
         Returns:
             None.
@@ -117,8 +114,6 @@ class PostgresPortalStore(PortalStore):
 
         self._database_url = database_url
         self._athlete_name_override = athlete_name_override
-        self._portal_user_id = portal_user_id
-        self._resolved_user_id = portal_user_id
         self._pool: asyncpg.Pool | None = None
         self._pool_lock = asyncio.Lock()
 
@@ -136,36 +131,33 @@ class PostgresPortalStore(PortalStore):
             Exception: Propagated from asyncpg when the query fails.
         """
 
-        user_id = await self._resolve_user_id(subject)
-        _, window_end = _utc_day_bounds(fallback_date)
         row = await self._fetchrow(
             """
             WITH tracked_dates AS (
                 SELECT target_date AS day
-                FROM daily_nutrition_targets
-                WHERE user_id = $1 AND target_date <= $2
+                FROM daily_targets
+                WHERE subject = $1 AND target_date <= $2
                 UNION ALL
-                SELECT (logged_at AT TIME ZONE 'UTC')::date AS day
-                FROM meal_logs
-                WHERE user_id = $1 AND logged_at < $3
+                SELECT meal_date AS day
+                FROM daily_meals
+                WHERE subject = $1 AND meal_date <= $2
                 UNION ALL
-                SELECT (start_time AT TIME ZONE 'UTC')::date AS day
-                FROM activities
-                WHERE user_id = $1 AND start_time < $3
+                SELECT activity_date AS day
+                FROM activity_entries
+                WHERE subject = $1 AND activity_date <= $2
             )
             SELECT MAX(day) AS default_day
             FROM tracked_dates
             WHERE day IS NOT NULL
             """,
-            user_id,
+            subject,
             fallback_date,
-            window_end,
         )
 
         return row["default_day"] if row and row["default_day"] else fallback_date
 
     async def get_profile(self, subject: str) -> PortalProfile:
-        """Read the athlete context from the APEX and MCP profile tables.
+        """Read the athlete context from the MCP profile row.
 
         Parameters:
             subject: Stable subject configured for the portal.
@@ -177,8 +169,7 @@ class PostgresPortalStore(PortalStore):
             Exception: Propagated from asyncpg when the query fails.
         """
 
-        user_id = await self._resolve_user_id(subject)
-        profile_row = await self._fetchrow(
+        row = await self._fetchrow(
             """
             SELECT *
             FROM user_profiles
@@ -186,38 +177,10 @@ class PostgresPortalStore(PortalStore):
             """,
             subject,
         )
-        user_row = await self._fetchrow(
-            """
-            SELECT
-                u.id,
-                u.name,
-                u.email,
-                u.weight_kg,
-                u.height_cm,
-                u.ftp,
-                u.daily_calorie_target,
-                u.protein_target_g,
-                u.carbs_target_g,
-                u.fat_target_g,
-                g.description AS goal_description,
-                g.phase_name,
-                g.weekly_tss_target,
-                g.weekly_hours_target
-            FROM users u
-            LEFT JOIN goals g
-                ON g.user_id = u.id
-            WHERE u.id = $1
-            """,
-            user_id,
-        )
-
-        profile_markdown = _record_text(profile_row, "profile_markdown")
-        if not profile_markdown:
-            profile_markdown = _build_profile_markdown(user_row)
+        profile_markdown = _record_text(row, "profile_markdown")
 
         athlete_name = (
             self._athlete_name_override
-            or _record_text(user_row, "name")
             or _extract_athlete_name(profile_markdown)
             or "Athlete"
         )
@@ -225,15 +188,12 @@ class PostgresPortalStore(PortalStore):
         return PortalProfile(
             athlete_name=athlete_name,
             subject=subject,
-            weight_kg=_record_float(profile_row, "weight_kg")
-            or _record_float(user_row, "weight_kg"),
-            height_cm=_record_float(profile_row, "height_cm")
-            or _record_float(user_row, "height_cm"),
-            ftp_watts=_record_int(profile_row, "ftp_watts")
-            or _record_int(user_row, "ftp"),
+            weight_kg=_record_float(row, "weight_kg"),
+            height_cm=_record_float(row, "height_cm"),
+            ftp_watts=_record_int(row, "ftp_watts"),
             profile_markdown=profile_markdown,
-            diet_goals_markdown=_build_diet_goals_markdown(user_row),
-            training_goals_markdown=_build_training_goals_markdown(user_row),
+            diet_goals_markdown=_record_text(row, "diet_goals_markdown"),
+            training_goals_markdown=_record_text(row, "training_goals_markdown"),
         )
 
     async def get_daily_snapshot(
@@ -360,33 +320,31 @@ class PostgresPortalStore(PortalStore):
         self._pool = None
 
     async def _get_daily_summary(self, subject: str, target_date: date) -> DailySummary:
-        """Compute target-vs-actual metrics using the APEX application schema.
+        """Compute target-vs-actual metrics using the MCP schema semantics.
 
         Parameters:
             subject: Stable subject configured for the portal.
             target_date: Business date to summarize.
 
         Returns:
-            DailySummary: Daily metrics aligned with the APEX app records.
+            DailySummary: Daily metrics aligned with the MCP server logic.
 
         Raises:
             Exception: Propagated from asyncpg when the summary queries fail.
         """
 
-        user_id = await self._resolve_user_id(subject)
-        window_start, window_end = _utc_day_bounds(target_date)
-
         target_row = await self._fetchrow(
             """
             SELECT
-                calories AS target_food_calories,
-                protein_g AS target_protein_g,
-                carbs_g AS target_carbs_g,
-                fat_g AS target_fat_g
-            FROM daily_nutrition_targets
-            WHERE user_id = $1 AND target_date = $2
+                target_food_calories,
+                target_exercise_calories,
+                target_protein_g,
+                target_carbs_g,
+                target_fat_g
+            FROM daily_targets
+            WHERE subject = $1 AND target_date = $2
             """,
-            user_id,
+            subject,
             target_date,
         )
         meal_row = await self._fetchrow(
@@ -396,32 +354,26 @@ class PostgresPortalStore(PortalStore):
                 COALESCE(SUM(mi.protein_g), 0) AS actual_protein_g,
                 COALESCE(SUM(mi.carbs_g), 0) AS actual_carbs_g,
                 COALESCE(SUM(mi.fat_g), 0) AS actual_fat_g,
-                COUNT(DISTINCT ml.id)::INTEGER AS meals_count,
+                COUNT(DISTINCT dm.id)::INTEGER AS meals_count,
                 COUNT(mi.id)::INTEGER AS meal_items_count
-            FROM meal_logs ml
-            LEFT JOIN meal_ingredients mi
-                ON mi.meal_log_id = ml.id
-            WHERE ml.user_id = $1
-                AND ml.logged_at >= $2
-                AND ml.logged_at < $3
+            FROM daily_meals dm
+            LEFT JOIN meal_items mi
+                ON mi.subject = dm.subject AND mi.meal_id = dm.id
+            WHERE dm.subject = $1 AND dm.meal_date = $2
             """,
-            user_id,
-            window_start,
-            window_end,
+            subject,
+            target_date,
         )
         activity_row = await self._fetchrow(
             """
             SELECT
                 COALESCE(SUM(COALESCE(calories, 0)), 0) AS actual_exercise_calories,
                 COUNT(id)::INTEGER AS activities_count
-            FROM activities
-            WHERE user_id = $1
-                AND start_time >= $2
-                AND start_time < $3
+            FROM activity_entries
+            WHERE subject = $1 AND activity_date = $2
             """,
-            user_id,
-            window_start,
-            window_end,
+            subject,
+            target_date,
         )
 
         actual_food_calories = _as_float(meal_row["actual_food_calories"]) or 0
@@ -437,7 +389,10 @@ class PostgresPortalStore(PortalStore):
         return DailySummary(
             target_date=target_date,
             target_food_calories=target_food,
-            target_exercise_calories=None,
+            target_exercise_calories=_nullable_float(
+                target_row,
+                "target_exercise_calories",
+            ),
             target_protein_g=target_protein,
             target_carbs_g=target_carbs,
             target_fat_g=target_fat,
@@ -479,53 +434,48 @@ class PostgresPortalStore(PortalStore):
             Exception: Propagated from asyncpg when the queries fail.
         """
 
-        user_id = await self._resolve_user_id(subject)
-        window_start, window_end = _utc_day_bounds(target_date)
-
         meal_rows = await self._fetch(
             """
-            SELECT id, meal_type, meal_name, source, logged_at
-            FROM meal_logs
-            WHERE user_id = $1
-                AND logged_at >= $2
-                AND logged_at < $3
-            ORDER BY logged_at ASC, id ASC
+            SELECT id, meal_label, notes_markdown
+            FROM daily_meals
+            WHERE subject = $1 AND meal_date = $2
+            ORDER BY id
             """,
-            user_id,
-            window_start,
-            window_end,
+            subject,
+            target_date,
         )
         if not meal_rows:
             return []
 
-        meal_ids = [str(row["id"]) for row in meal_rows]
+        meal_ids = [int(row["id"]) for row in meal_rows]
         item_rows = await self._fetch(
             """
             SELECT
                 id,
-                meal_log_id,
-                food_id,
-                name,
-                quantity_g,
+                meal_id,
+                product_id,
+                ingredient_name,
+                grams,
                 calories,
-                protein_g,
                 carbs_g,
+                protein_g,
                 fat_g
-            FROM meal_ingredients
-            WHERE meal_log_id = ANY($1::varchar[])
-            ORDER BY meal_log_id, id
+            FROM meal_items
+            WHERE subject = $1 AND meal_id = ANY($2::bigint[])
+            ORDER BY meal_id, id
             """,
+            subject,
             meal_ids,
         )
 
-        items_by_meal: dict[str, list[MealItem]] = defaultdict(list)
+        items_by_meal: dict[int, list[MealItem]] = defaultdict(list)
         for row in item_rows:
-            items_by_meal[str(row["meal_log_id"])].append(
+            items_by_meal[int(row["meal_id"])].append(
                 MealItem(
-                    id=str(row["id"]),
-                    product_id=str(row["food_id"]) if row["food_id"] else None,
-                    ingredient_name=str(row["name"]),
-                    grams=_as_float(row["quantity_g"]) or 0,
+                    id=int(row["id"]),
+                    product_id=_as_int(row["product_id"]),
+                    ingredient_name=str(row["ingredient_name"]),
+                    grams=_as_float(row["grams"]) or 0,
                     calories=_as_float(row["calories"]) or 0,
                     carbs_g=_as_float(row["carbs_g"]) or 0,
                     protein_g=_as_float(row["protein_g"]) or 0,
@@ -535,16 +485,17 @@ class PostgresPortalStore(PortalStore):
 
         meals: list[Meal] = []
         for row in meal_rows:
-            meal_id = str(row["id"])
+            meal_id = int(row["id"])
             items = items_by_meal.get(meal_id, [])
 
             # The totals are recomputed here rather than trusted from another
-            # table so the portal stays aligned with the raw ingredients.
+            # table or SQL view so the portal stays aligned with the raw source
+            # of truth in `meal_items`.
             meals.append(
                 Meal(
                     id=meal_id,
-                    meal_label=_build_meal_label(row),
-                    notes_markdown=_build_meal_notes(row),
+                    meal_label=str(row["meal_label"]),
+                    notes_markdown=str(row["notes_markdown"] or ""),
                     items=items,
                     total_calories=round(sum(item.calories for item in items), 2),
                     total_carbs_g=round(sum(item.carbs_g for item in items), 2),
@@ -573,49 +524,49 @@ class PostgresPortalStore(PortalStore):
             Exception: Propagated from asyncpg when the query fails.
         """
 
-        user_id = await self._resolve_user_id(subject)
-        window_start, window_end = _utc_day_bounds(target_date)
-
         rows = await self._fetch(
             """
             SELECT
                 id,
-                sport,
-                name,
-                distance_m,
-                duration_seconds,
-                elevation_m,
-                avg_hr,
-                max_hr,
+                title,
+                activity_date,
+                sport_type,
+                distance_meters,
+                moving_time_seconds,
+                total_elevation_gain_meters,
+                average_heartrate,
+                max_heartrate,
                 calories,
-                tss,
-                strava_id
-            FROM activities
-            WHERE user_id = $1
-                AND start_time >= $2
-                AND start_time < $3
-            ORDER BY start_time ASC, id ASC
+                suffer_score,
+                notes_markdown,
+                external_source
+            FROM activity_entries
+            WHERE subject = $1 AND activity_date = $2
+            ORDER BY id
             """,
-            user_id,
-            window_start,
-            window_end,
+            subject,
+            target_date,
         )
 
         return [
             Activity(
-                id=str(row["id"]),
-                title=str(row["name"]),
-                activity_date=target_date,
-                sport_type=_humanize_label(_record_text(row, "sport")) or None,
-                distance_meters=_as_float(row["distance_m"]),
-                moving_time_seconds=_as_int(row["duration_seconds"]),
-                total_elevation_gain_meters=_as_float(row["elevation_m"]),
-                average_heartrate=_as_float(row["avg_hr"]),
-                max_heartrate=_as_float(row["max_hr"]),
+                id=int(row["id"]),
+                title=str(row["title"]),
+                activity_date=row["activity_date"],
+                sport_type=str(row["sport_type"]) if row["sport_type"] else None,
+                distance_meters=_as_float(row["distance_meters"]),
+                moving_time_seconds=_as_int(row["moving_time_seconds"]),
+                total_elevation_gain_meters=_as_float(
+                    row["total_elevation_gain_meters"]
+                ),
+                average_heartrate=_as_float(row["average_heartrate"]),
+                max_heartrate=_as_float(row["max_heartrate"]),
                 calories=_as_float(row["calories"]),
-                suffer_score=_as_float(row["tss"]),
-                notes_markdown="",
-                external_source="strava" if row["strava_id"] else None,
+                suffer_score=_as_float(row["suffer_score"]),
+                notes_markdown=str(row["notes_markdown"] or ""),
+                external_source=str(row["external_source"])
+                if row["external_source"]
+                else None,
             )
             for row in rows
         ]
@@ -640,76 +591,64 @@ class PostgresPortalStore(PortalStore):
             Exception: Propagated from asyncpg when the query fails.
         """
 
-        user_id = await self._resolve_user_id(subject)
-        window_start, window_end = _utc_day_bounds(date_from)
-        _, final_window_end = _utc_day_bounds(date_to)
-
         rows = await self._fetch(
             """
             WITH tracked_dates AS (
                 SELECT target_date AS day
-                FROM daily_nutrition_targets
-                WHERE user_id = $1 AND target_date BETWEEN $2 AND $3
+                FROM daily_targets
+                WHERE subject = $1 AND target_date BETWEEN $2 AND $3
                 UNION
-                SELECT (logged_at AT TIME ZONE 'UTC')::date AS day
-                FROM meal_logs
-                WHERE user_id = $1
-                    AND logged_at >= $4
-                    AND logged_at < $5
+                SELECT meal_date AS day
+                FROM daily_meals
+                WHERE subject = $1 AND meal_date BETWEEN $2 AND $3
                 UNION
-                SELECT (start_time AT TIME ZONE 'UTC')::date AS day
-                FROM activities
-                WHERE user_id = $1
-                    AND start_time >= $4
-                    AND start_time < $5
+                SELECT activity_date AS day
+                FROM activity_entries
+                WHERE subject = $1 AND activity_date BETWEEN $2 AND $3
             ),
             meal_totals AS (
                 SELECT
-                    (ml.logged_at AT TIME ZONE 'UTC')::date AS day,
+                    dm.meal_date AS day,
                     COALESCE(SUM(mi.calories), 0) AS actual_food_calories,
                     COALESCE(SUM(mi.protein_g), 0) AS actual_protein_g,
                     COALESCE(SUM(mi.carbs_g), 0) AS actual_carbs_g,
                     COALESCE(SUM(mi.fat_g), 0) AS actual_fat_g,
-                    COUNT(DISTINCT ml.id)::INTEGER AS meals_count,
+                    COUNT(DISTINCT dm.id)::INTEGER AS meals_count,
                     COUNT(mi.id)::INTEGER AS meal_items_count
-                FROM meal_logs ml
-                LEFT JOIN meal_ingredients mi
-                    ON mi.meal_log_id = ml.id
-                WHERE ml.user_id = $1
-                    AND ml.logged_at >= $4
-                    AND ml.logged_at < $5
-                GROUP BY (ml.logged_at AT TIME ZONE 'UTC')::date
+                FROM daily_meals dm
+                LEFT JOIN meal_items mi
+                    ON mi.subject = dm.subject AND mi.meal_id = dm.id
+                WHERE dm.subject = $1 AND dm.meal_date BETWEEN $2 AND $3
+                GROUP BY dm.meal_date
             ),
             activity_totals AS (
                 SELECT
-                    (start_time AT TIME ZONE 'UTC')::date AS day,
+                    activity_date AS day,
                     COALESCE(
                         SUM(COALESCE(calories, 0)),
                         0
                     ) AS actual_exercise_calories,
                     COALESCE(
-                        SUM(COALESCE(distance_m, 0)),
+                        SUM(COALESCE(distance_meters, 0)),
                         0
                     ) AS total_distance_meters,
                     COALESCE(
-                        SUM(COALESCE(duration_seconds, 0)),
+                        SUM(COALESCE(moving_time_seconds, 0)),
                         0
                     )::INTEGER AS total_moving_time_seconds,
                     COALESCE(
-                        SUM(COALESCE(elevation_m, 0)),
+                        SUM(COALESCE(total_elevation_gain_meters, 0)),
                         0
                     ) AS total_elevation_gain_meters,
-                    COALESCE(SUM(COALESCE(tss, 0)), 0) AS total_suffer_score,
+                    COALESCE(SUM(COALESCE(suffer_score, 0)), 0) AS total_suffer_score,
                     COUNT(id)::INTEGER AS activities_count
-                FROM activities
-                WHERE user_id = $1
-                    AND start_time >= $4
-                    AND start_time < $5
-                GROUP BY (start_time AT TIME ZONE 'UTC')::date
+                FROM activity_entries
+                WHERE subject = $1 AND activity_date BETWEEN $2 AND $3
+                GROUP BY activity_date
             )
             SELECT
                 tracked_dates.day,
-                dt.calories AS target_food_calories,
+                dt.target_food_calories,
                 COALESCE(mt.actual_food_calories, 0) AS actual_food_calories,
                 COALESCE(
                     at.actual_exercise_calories,
@@ -734,19 +673,17 @@ class PostgresPortalStore(PortalStore):
                 ) AS total_elevation_gain_meters,
                 COALESCE(at.total_suffer_score, 0) AS total_suffer_score
             FROM tracked_dates
-            LEFT JOIN daily_nutrition_targets dt
-                ON dt.user_id = $1 AND dt.target_date = tracked_dates.day
+            LEFT JOIN daily_targets dt
+                ON dt.subject = $1 AND dt.target_date = tracked_dates.day
             LEFT JOIN meal_totals mt
                 ON mt.day = tracked_dates.day
             LEFT JOIN activity_totals at
                 ON at.day = tracked_dates.day
             ORDER BY tracked_dates.day DESC
             """,
-            user_id,
+            subject,
             date_from,
             date_to,
-            window_start,
-            final_window_end,
         )
 
         return [
@@ -774,65 +711,6 @@ class PostgresPortalStore(PortalStore):
             )
             for row in rows
         ]
-
-    async def _resolve_user_id(self, subject: str) -> str:
-        """Resolve the APEX `users.id` bound to the configured portal.
-
-        Parameters:
-            subject: Stable subject configured for the portal.
-
-        Returns:
-            str: The matching APEX `users.id` value.
-
-        Raises:
-            RuntimeError: Raised when the user binding cannot be resolved.
-            Exception: Propagated from asyncpg when the queries fail.
-        """
-
-        if self._resolved_user_id:
-            return self._resolved_user_id
-
-        profile_row = await self._fetchrow(
-            """
-            SELECT login
-            FROM user_profiles
-            WHERE subject = $1
-            """,
-            subject,
-        )
-        login_value = _record_text(profile_row, "login")
-        if login_value:
-            user_row = await self._fetchrow(
-                """
-                SELECT id
-                FROM users
-                WHERE id = $1 OR email = $1
-                LIMIT 1
-                """,
-                login_value,
-            )
-            if user_row:
-                self._resolved_user_id = str(user_row["id"])
-                return self._resolved_user_id
-
-        count_row = await self._fetchrow("SELECT COUNT(*)::INTEGER AS count FROM users")
-        if _as_int(count_row["count"] if count_row else None) == 1:
-            only_user_row = await self._fetchrow(
-                """
-                SELECT id
-                FROM users
-                ORDER BY created_at ASC
-                LIMIT 1
-                """
-            )
-            if only_user_row:
-                self._resolved_user_id = str(only_user_row["id"])
-                return self._resolved_user_id
-
-        raise RuntimeError(
-            "Unable to resolve the portal user. Set APEX_PORTAL_USER_ID to an "
-            "explicit users.id value for this deployment."
-        )
 
     async def _fetchrow(self, query: str, *args: object) -> asyncpg.Record | None:
         """Run one-row SQL after ensuring the pool exists.
@@ -897,205 +775,9 @@ class PostgresPortalStore(PortalStore):
                     # asyncpg's statement cache, so we keep it disabled to
                     # match the MCP server compatibility setup.
                     statement_cache_size=0,
-        )
+                )
 
         return self._pool
-
-
-def _utc_day_bounds(target_date: date) -> tuple[datetime, datetime]:
-    """Return inclusive-exclusive UTC bounds for one business day.
-
-    Parameters:
-        target_date: Calendar day to convert into UTC timestamps.
-
-    Returns:
-        tuple[datetime, datetime]: Start and end timestamps in UTC.
-
-    Raises:
-        This helper does not raise errors directly.
-    """
-
-    window_start = datetime(
-        target_date.year,
-        target_date.month,
-        target_date.day,
-        tzinfo=UTC,
-    )
-    window_end = window_start + timedelta(days=1)
-    return window_start, window_end
-
-
-def _build_profile_markdown(user_row: asyncpg.Record | None) -> str:
-    """Create a lightweight profile fallback from the APEX user row.
-
-    Parameters:
-        user_row: Optional joined `users` and `goals` record.
-
-    Returns:
-        str: Markdown summary used when the MCP profile document is absent.
-
-    Raises:
-        This helper does not raise errors directly.
-    """
-
-    athlete_name = _record_text(user_row, "name") or "Athlete"
-    lines = [f"# {athlete_name}'s APEX Profile", ""]
-
-    email = _record_text(user_row, "email")
-    if email:
-        lines.append(f"- Email: {email}")
-
-    weight_kg = _record_float(user_row, "weight_kg")
-    if weight_kg is not None:
-        lines.append(f"- Weight: {weight_kg:.1f} kg")
-
-    height_cm = _record_int(user_row, "height_cm")
-    if height_cm is not None:
-        lines.append(f"- Height: {height_cm} cm")
-
-    ftp_watts = _record_int(user_row, "ftp")
-    if ftp_watts is not None:
-        lines.append(f"- FTP: {ftp_watts} W")
-
-    goal_description = _record_text(user_row, "goal_description")
-    if goal_description:
-        lines.append(f"- Current goal: {goal_description}")
-
-    return "\n".join(lines).strip()
-
-
-def _build_diet_goals_markdown(user_row: asyncpg.Record | None) -> str:
-    """Build a compact nutrition-target summary from the APEX user row.
-
-    Parameters:
-        user_row: Optional joined `users` and `goals` record.
-
-    Returns:
-        str: Markdown block describing the stored nutrition targets.
-
-    Raises:
-        This helper does not raise errors directly.
-    """
-
-    calories = _record_int(user_row, "daily_calorie_target")
-    protein = _record_int(user_row, "protein_target_g")
-    carbs = _record_int(user_row, "carbs_target_g")
-    fat = _record_int(user_row, "fat_target_g")
-
-    if all(value is None for value in [calories, protein, carbs, fat]):
-        return ""
-
-    lines = ["## Nutrition targets", ""]
-    if calories is not None:
-        lines.append(f"- Daily calories: {calories} kcal")
-    if protein is not None:
-        lines.append(f"- Protein: {protein} g")
-    if carbs is not None:
-        lines.append(f"- Carbs: {carbs} g")
-    if fat is not None:
-        lines.append(f"- Fat: {fat} g")
-    return "\n".join(lines)
-
-
-def _build_training_goals_markdown(user_row: asyncpg.Record | None) -> str:
-    """Build a compact training-goal summary from the APEX goal row.
-
-    Parameters:
-        user_row: Optional joined `users` and `goals` record.
-
-    Returns:
-        str: Markdown block describing the current training focus.
-
-    Raises:
-        This helper does not raise errors directly.
-    """
-
-    goal_description = _record_text(user_row, "goal_description")
-    phase_name = _record_text(user_row, "phase_name")
-    weekly_tss_target = _record_int(user_row, "weekly_tss_target")
-    weekly_hours_target = _record_float(user_row, "weekly_hours_target")
-
-    if not any([goal_description, phase_name, weekly_tss_target, weekly_hours_target]):
-        return ""
-
-    lines = ["## Training goals", ""]
-    if goal_description:
-        lines.append(f"- Goal: {goal_description}")
-    if phase_name:
-        lines.append(f"- Phase: {phase_name}")
-    if weekly_tss_target is not None:
-        lines.append(f"- Weekly TSS target: {weekly_tss_target}")
-    if weekly_hours_target is not None:
-        lines.append(f"- Weekly hours target: {weekly_hours_target:.1f} h")
-    return "\n".join(lines)
-
-
-def _build_meal_label(row: asyncpg.Record | None) -> str:
-    """Return the best visible meal label for one meal row.
-
-    Parameters:
-        row: Optional `meal_logs` record.
-
-    Returns:
-        str: Human-readable meal title.
-
-    Raises:
-        This helper does not raise errors directly.
-    """
-
-    meal_name = _record_text(row, "meal_name")
-    if meal_name:
-        return meal_name
-
-    meal_type = _humanize_label(_record_text(row, "meal_type"))
-    return meal_type or "Meal"
-
-
-def _build_meal_notes(row: asyncpg.Record | None) -> str:
-    """Build a short note line for a meal row.
-
-    Parameters:
-        row: Optional `meal_logs` record.
-
-    Returns:
-        str: Small supporting note for the meal card.
-
-    Raises:
-        This helper does not raise errors directly.
-    """
-
-    if row is None:
-        return ""
-
-    notes: list[str] = []
-    source = _humanize_label(_record_text(row, "source"))
-    if source and source.lower() != "manual":
-        notes.append(f"Source: {source}")
-
-    if "logged_at" in row and row["logged_at"] is not None:
-        logged_at = row["logged_at"].astimezone(UTC)
-        notes.append(f"Logged {logged_at.strftime('%H:%M UTC')}")
-
-    return " • ".join(notes)
-
-
-def _humanize_label(value: str) -> str:
-    """Convert an underscored storage label into display text.
-
-    Parameters:
-        value: Raw storage label such as `easy_z2`.
-
-    Returns:
-        str: Human-readable label such as `Easy Z2`.
-
-    Raises:
-        This helper does not raise errors directly.
-    """
-
-    cleaned = value.strip()
-    if not cleaned:
-        return ""
-    return cleaned.replace("_", " ").title()
 
 
 def _extract_athlete_name(profile_markdown: str) -> str | None:

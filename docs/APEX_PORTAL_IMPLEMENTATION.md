@@ -16,9 +16,9 @@ easy to maintain.
 ## Product Context
 
 The existing APEX ecosystem already stores persistent wellness data in the
-main APEX Supabase/Postgres application tables. The portal reads those
-nutrition and training records directly, and reuses the MCP `user_profiles`
-document for richer athlete context when it exists.
+Postgres schema behind `apex-mcp-server`. The portal reads those MCP wellness
+records directly so the review experience matches the same data the MCP tools
+already expose.
 
 For this portal, only the read side matters. The athlete should be able to open
 one website and quickly answer questions such as:
@@ -67,8 +67,7 @@ flowchart LR
 - `backend/src/apex_portal_api/config.py`
   Environment-driven runtime settings.
 - `backend/src/apex_portal_api/store.py`
-  Supabase/Postgres read queries aligned to the APEX app tables plus
-  `user_profiles` fallback context.
+  Supabase/Postgres read queries aligned to the MCP wellness tables.
 - `backend/src/apex_portal_api/models.py`
   Typed API response models used by the routes.
 
@@ -76,26 +75,22 @@ flowchart LR
 
 The backend reads from these existing tables:
 
-- `users`
-- `goals`
-- `daily_nutrition_targets`
-- `meal_logs`
-- `meal_ingredients`
-- `activities`
 - `user_profiles`
+- `daily_targets`
+- `daily_meals`
+- `meal_items`
+- `activity_entries`
 
 The portal does not write to those tables. It only aggregates and presents the
 data already stored by the MCP workflows.
 
 ## Important Design Decisions
 
-### Single-athlete binding
+### Single-athlete subject binding
 
-The portal reads one configured `APEX_PORTAL_SUBJECT` for MCP profile context
-and one APEX athlete record for the actual nutrition and training history.
-`APEX_PORTAL_USER_ID` is the safest production setting because it makes that
-binding explicit. For local single-user databases, the backend can auto-resolve
-the only `users.id` row to stay easy to operate.
+The portal reads one configured `APEX_PORTAL_SUBJECT`, exactly like the MCP
+storage layer does. That keeps the portal aligned with the same caller-scoped
+data model instead of introducing a second identity mapping layer.
 
 ### Latest tracked day default
 
@@ -140,7 +135,6 @@ The user-facing outputs are:
 ## Review Notes
 
 When reviewing future changes, the most important question is whether the
-portal still matches the APEX app tables it reads today. If the APEX backend
-changes how it stores targets, meals, or activities, the portal queries and
-README should be updated at the same time. `user_profiles` should stay a
-secondary profile/context input, not the primary source for day-level history.
+portal still matches the `apex-mcp-server` storage semantics. If the MCP
+server changes how it stores targets, meals, or activities, the portal queries
+and README should be updated at the same time.

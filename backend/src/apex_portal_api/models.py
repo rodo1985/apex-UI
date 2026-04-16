@@ -109,8 +109,8 @@ class MealItem(BaseModel):
         This model does not raise errors directly.
     """
 
-    id: str
-    product_id: str | None = None
+    id: int
+    product_id: int | None = None
     ingredient_name: str
     grams: float
     calories: float
@@ -139,7 +139,7 @@ class Meal(BaseModel):
         This model does not raise errors directly.
     """
 
-    id: str
+    id: int
     meal_label: str
     notes_markdown: str = ""
     items: list[MealItem] = Field(default_factory=list)
@@ -174,7 +174,7 @@ class Activity(BaseModel):
         This model does not raise errors directly.
     """
 
-    id: str
+    id: int
     title: str
     activity_date: date
     sport_type: str | None = None
