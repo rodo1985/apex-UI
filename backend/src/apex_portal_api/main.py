@@ -14,6 +14,7 @@ from apex_portal_api.config import Settings
 from apex_portal_api.models import (
     BootstrapResponse,
     DailySnapshot,
+    FoodProductsResponse,
     HistoryResponse,
     TrendsResponse,
 )
@@ -226,6 +227,31 @@ def create_app(
         return await store_dependency.get_daily_snapshot(
             resolved_settings.portal_subject,
             target_date,
+        )
+
+    @app.get("/portal/products", response_model=FoodProductsResponse)
+    async def get_products(
+        _: None = Depends(require_access),
+        store_dependency: PortalStore = Depends(current_store),
+    ) -> FoodProductsResponse:
+        """Return the reusable food products bound to the current subject.
+
+        Parameters:
+            _: Access-control dependency for the optional bearer token.
+            store_dependency: Store dependency injected by FastAPI.
+
+        Returns:
+            FoodProductsResponse: Read-only product catalog rows.
+
+        Raises:
+            HTTPException: Propagated by the access dependency when unauthorized.
+            Exception: Propagated by the backing store when queries fail.
+        """
+
+        return FoodProductsResponse(
+            items=await store_dependency.list_products(
+                resolved_settings.portal_subject
+            )
         )
 
     @app.get("/portal/history", response_model=HistoryResponse)

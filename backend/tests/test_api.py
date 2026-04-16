@@ -13,6 +13,8 @@ from apex_portal_api.models import (
     BootstrapResponse,
     DailySnapshot,
     DailySummary,
+    FoodProduct,
+    FoodProductsResponse,
     HistoryDay,
     HistoryResponse,
     Meal,
@@ -120,6 +122,21 @@ class FakePortalStore(PortalStore):
                 )
             ],
         )
+
+    async def list_products(self, subject: str) -> list[FoodProduct]:
+        """Return a small reusable product catalog for the test subject."""
+
+        return [
+            FoodProduct(
+                id=1,
+                name="Rolled oats",
+                default_serving_g=40,
+                calories_per_100g=384,
+                carbs_g_per_100g=66,
+                protein_g_per_100g=13,
+                fat_g_per_100g=7,
+            )
+        ]
 
     async def get_history(
         self,
@@ -246,9 +263,16 @@ def test_protected_routes_require_bearer_token() -> None:
         "/portal/bootstrap?target_date=2026-04-16",
         headers={"Authorization": "Bearer secret-token"},
     )
+    products_unauthorized = client.get("/portal/products")
+    products_authorized = client.get(
+        "/portal/products",
+        headers={"Authorization": "Bearer secret-token"},
+    )
 
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
+    assert products_unauthorized.status_code == 401
+    assert products_authorized.status_code == 200
 
 
 def test_history_route_uses_requested_window() -> None:
@@ -274,3 +298,16 @@ def test_bootstrap_uses_store_default_date_when_target_date_is_omitted() -> None
     assert response.status_code == 200
     payload = BootstrapResponse.model_validate(response.json())
     assert payload.snapshot.date == date(2026, 4, 16)
+
+
+def test_products_route_returns_expected_shape() -> None:
+    """Ensure the products route returns the configured food catalog rows."""
+
+    client = build_test_client()
+
+    response = client.get("/portal/products")
+
+    assert response.status_code == 200
+    payload = FoodProductsResponse.model_validate(response.json())
+    assert payload.items[0].name == "Rolled oats"
+    assert payload.items[0].protein_g_per_100g == 13

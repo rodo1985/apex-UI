@@ -37,6 +37,50 @@ class PortalProfile(BaseModel):
     training_goals_markdown: str = ""
 
 
+class FoodProduct(BaseModel):
+    """Describe one reusable food product from the MCP catalog.
+
+    Parameters:
+        id: Product identifier.
+        name: Product display name.
+        default_serving_g: Optional common serving size in grams.
+        calories_per_100g: Calories for one hundred grams.
+        carbs_g_per_100g: Carbohydrate grams for one hundred grams.
+        protein_g_per_100g: Protein grams for one hundred grams.
+        fat_g_per_100g: Fat grams for one hundred grams.
+
+    Returns:
+        FoodProduct: Serializable food product row for the portal table.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    id: int
+    name: str
+    default_serving_g: float | None = None
+    calories_per_100g: float
+    carbs_g_per_100g: float
+    protein_g_per_100g: float
+    fat_g_per_100g: float
+
+
+class FoodProductsResponse(BaseModel):
+    """Represent the reusable food product list returned by the backend.
+
+    Parameters:
+        items: Food products ordered by product name.
+
+    Returns:
+        FoodProductsResponse: Serializable product list for the portal.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    items: list[FoodProduct] = Field(default_factory=list)
+
+
 class DailySummary(BaseModel):
     """Represent one day's target-vs-actual summary.
 

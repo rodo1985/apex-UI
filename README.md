@@ -6,8 +6,8 @@ FastAPI backend that reads the same Supabase/Postgres data already used by the
 `apex-mcp-server` project.
 
 The goal is to keep the experience simple: open the portal, review the latest
-tracked day, inspect past logs, and track how fuelling and training are
-evolving over time.
+tracked day, inspect profile context and reusable foods, review past logs, and
+track how fuelling and training are evolving over time.
 
 ## Key Features / Scope
 
@@ -16,19 +16,25 @@ evolving over time.
 - Shows one athlete's selected-day dashboard with:
   - food vs target calories
   - macro progress
-  - logged meals and meal items
-  - completed activities
+  - stacked meals and activities for easier phone review
+  - expandable meal ingredient detail
+- Shows a dedicated profile view with body metrics and stored APEX profile
+  documents.
+- Shows a dedicated food product table for reusable foods already stored in the
+  MCP database.
 - Shows past tracked days with quick review metrics and counts.
 - Shows evolution trends for food, exercise, macros, activity load, and
   logging consistency.
+- Adds a mobile sidebar drawer with a hamburger toggle for easier navigation on
+  smaller screens.
 - Reuses the APEX visual language: dark workspace, teal brand accent, and APEX
   logo/wordmark.
 - Deploys as one Vercel project with:
   - `frontend/` at `/`
   - `backend/` at `/api`
 - Reads directly from the MCP wellness tables:
-  `user_profiles`, `daily_targets`, `daily_meals`, `meal_items`, and
-  `activity_entries`.
+  `user_profiles`, `food_products`, `daily_targets`, `daily_meals`,
+  `meal_items`, and `activity_entries`.
 
 ### Out Of Scope
 
@@ -122,7 +128,7 @@ Recommended:
 - `APEX_PORTAL_TIMEZONE`
   Used to resolve the default “today” date on the backend.
 - `APEX_PORTAL_ATHLETE_NAME`
-  Optional display-name override for the header.
+  Optional display-name override for the profile and sidebar.
 
 ### Frontend environment variables
 

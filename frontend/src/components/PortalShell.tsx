@@ -2,12 +2,18 @@ import type { ReactNode } from "react";
 
 import { ApexLockup } from "./Brand";
 import type { PortalProfile } from "../lib/api";
-import { markdownToExcerpt } from "../lib/format";
 
-export type PortalView = "today" | "history" | "trends";
+export type PortalView =
+  | "today"
+  | "profile"
+  | "products"
+  | "history"
+  | "trends";
 
 const NAV_ITEMS: Array<{ label: string; value: PortalView }> = [
   { label: "Today", value: "today" },
+  { label: "Profile", value: "profile" },
+  { label: "Food products", value: "products" },
   { label: "History", value: "history" },
   { label: "Trends", value: "trends" },
 ];
@@ -19,6 +25,9 @@ const NAV_ITEMS: Array<{ label: string; value: PortalView }> = [
  *   profile: Athlete context shown in the shell.
  *   activeView: Currently selected view.
  *   onChangeView: Callback used when the user switches views.
+ *   sidebarOpen: Whether the mobile sidebar drawer is visible.
+ *   onToggleSidebar: Callback used by the mobile menu button.
+ *   onCloseSidebar: Callback used when the sidebar should close.
  *   onLock: Optional callback used to clear the local access token.
  *   children: Active view content.
  *
@@ -32,21 +41,46 @@ export function PortalShell({
   profile,
   activeView,
   onChangeView,
+  sidebarOpen,
+  onToggleSidebar,
+  onCloseSidebar,
   onLock,
   children,
 }: {
   profile: PortalProfile;
   activeView: PortalView;
   onChangeView: (value: PortalView) => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+  onCloseSidebar: () => void;
   onLock?: () => void;
   children: ReactNode;
 }) {
+  const activeLabel =
+    NAV_ITEMS.find((item) => item.value === activeView)?.label ?? "Portal";
+
   return (
-    <div className="portal-shell">
-      <aside className="portal-sidebar">
-        <div className="portal-sidebar-block">
+    <div className={`portal-shell${sidebarOpen ? " sidebar-open" : ""}`}>
+      <button
+        type="button"
+        className={`portal-sidebar-backdrop${sidebarOpen ? " visible" : ""}`}
+        onClick={onCloseSidebar}
+        aria-label="Close navigation menu"
+      />
+
+      <aside className={`portal-sidebar${sidebarOpen ? " open" : ""}`}>
+        <div className="portal-sidebar-block portal-sidebar-brand">
           <ApexLockup size={40} wordmarkSize={24} mode="naked" />
           <p className="portal-sidebar-kicker">Progress portal</p>
+          <button
+            type="button"
+            className="portal-sidebar-close"
+            onClick={onCloseSidebar}
+            aria-label="Close navigation menu"
+          >
+            <span />
+            <span />
+          </button>
         </div>
 
         <nav className="portal-nav" aria-label="Portal sections">
@@ -57,7 +91,10 @@ export function PortalShell({
               className={`portal-nav-button${
                 item.value === activeView ? " active" : ""
               }`}
-              onClick={() => onChangeView(item.value)}
+              onClick={() => {
+                onChangeView(item.value);
+                onCloseSidebar();
+              }}
             >
               {item.label}
             </button>
@@ -74,20 +111,6 @@ export function PortalShell({
           </div>
         </div>
 
-        <div className="portal-sidebar-block">
-          <p className="portal-sidebar-label">Focus</p>
-          <p className="portal-sidebar-copy">
-            {markdownToExcerpt(profile.training_goals_markdown, 120)}
-          </p>
-        </div>
-
-        <div className="portal-sidebar-block">
-          <p className="portal-sidebar-label">Fueling</p>
-          <p className="portal-sidebar-copy">
-            {markdownToExcerpt(profile.diet_goals_markdown, 120)}
-          </p>
-        </div>
-
         {onLock ? (
           <button
             type="button"
@@ -99,7 +122,28 @@ export function PortalShell({
         ) : null}
       </aside>
 
-      <main className="portal-main">{children}</main>
+      <main className="portal-main">
+        <div className="portal-mobile-bar">
+          <button
+            type="button"
+            className="portal-menu-button"
+            aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"}
+            aria-expanded={sidebarOpen}
+            onClick={onToggleSidebar}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+
+          <div className="portal-mobile-bar-copy">
+            <p className="portal-kicker">APEX Progress Review</p>
+            <strong>{activeLabel}</strong>
+          </div>
+        </div>
+
+        {children}
+      </main>
     </div>
   );
 }

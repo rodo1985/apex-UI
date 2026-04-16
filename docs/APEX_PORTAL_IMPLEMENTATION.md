@@ -25,6 +25,8 @@ one website and quickly answer questions such as:
 
 - How is today going against the target?
 - What did I eat and what training did I do?
+- What profile context and goals are currently stored?
+- Which reusable food products already exist in the catalog?
 - Which previous days are worth reviewing?
 - Is my fuelling and training trend moving in the right direction?
 
@@ -44,7 +46,7 @@ flowchart LR
     API --> DB["Supabase / Postgres"]
     DB --> API
     API --> Web
-    Web --> Views["Today, History, Trends"]
+    Web --> Views["Today, Profile, Food products, History, Trends"]
 ```
 
 ## Main Components
@@ -53,12 +55,14 @@ flowchart LR
 
 - `frontend/src/App.tsx`
   Main portal state, section switching, loading, and unlock handling.
+- `frontend/src/components/MarkdownContent.tsx`
+  Lightweight markdown renderer for profile sections.
 - `frontend/src/components/Brand.tsx`
   APEX icon and wordmark components reused across the portal.
 - `frontend/src/components/PortalShell.tsx`
-  Sidebar, header, and content shell.
+  Sidebar drawer, mobile navigation bar, and content shell.
 - `frontend/src/lib/api.ts`
-  Small fetch client for the backend endpoints.
+  Small fetch client for the backend endpoints, including the product catalog.
 
 ### Backend
 
@@ -76,6 +80,7 @@ flowchart LR
 The backend reads from these existing tables:
 
 - `user_profiles`
+- `food_products`
 - `daily_targets`
 - `daily_meals`
 - `meal_items`
@@ -117,11 +122,21 @@ The backend only exposes the reporting views the portal needs:
 That keeps the backend small and lowers the risk of drifting away from the
 authoritative MCP data model.
 
+The current read-only routes are:
+
+- `/portal/bootstrap`
+- `/portal/day`
+- `/portal/products`
+- `/portal/history`
+- `/portal/trends`
+
 ## Outputs
 
 The user-facing outputs are:
 
-- a today snapshot with meal and activity detail
+- a today snapshot with stacked meal and activity detail
+- a profile page with metrics and stored markdown documents
+- a reusable food product table
 - a history list with quick adherence and activity context
 - a trends view showing longer-term evolution
 

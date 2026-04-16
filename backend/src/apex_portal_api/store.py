@@ -14,6 +14,7 @@ from apex_portal_api.models import (
     Activity,
     DailySnapshot,
     DailySummary,
+    FoodProduct,
     HistoryDay,
     HistoryResponse,
     Meal,
@@ -45,6 +46,10 @@ class PortalStore(ABC):
     @abstractmethod
     async def get_profile(self, subject: str) -> PortalProfile:
         """Return the athlete context bound to the current portal."""
+
+    @abstractmethod
+    async def list_products(self, subject: str) -> list[FoodProduct]:
+        """Return reusable food products for the current portal subject."""
 
     @abstractmethod
     async def get_daily_snapshot(
@@ -195,6 +200,49 @@ class PostgresPortalStore(PortalStore):
             diet_goals_markdown=_record_text(row, "diet_goals_markdown"),
             training_goals_markdown=_record_text(row, "training_goals_markdown"),
         )
+
+    async def list_products(self, subject: str) -> list[FoodProduct]:
+        """Read reusable food products for the configured portal subject.
+
+        Parameters:
+            subject: Stable subject configured for the portal.
+
+        Returns:
+            list[FoodProduct]: Product rows ordered by name and id.
+
+        Raises:
+            Exception: Propagated from asyncpg when the query fails.
+        """
+
+        rows = await self._fetch(
+            """
+            SELECT
+                id,
+                name,
+                default_serving_g,
+                calories_per_100g,
+                carbs_g_per_100g,
+                protein_g_per_100g,
+                fat_g_per_100g
+            FROM food_products
+            WHERE subject = $1
+            ORDER BY LOWER(name), id
+            """,
+            subject,
+        )
+
+        return [
+            FoodProduct(
+                id=int(row["id"]),
+                name=str(row["name"]),
+                default_serving_g=_as_float(row["default_serving_g"]),
+                calories_per_100g=_as_float(row["calories_per_100g"]) or 0,
+                carbs_g_per_100g=_as_float(row["carbs_g_per_100g"]) or 0,
+                protein_g_per_100g=_as_float(row["protein_g_per_100g"]) or 0,
+                fat_g_per_100g=_as_float(row["fat_g_per_100g"]) or 0,
+            )
+            for row in rows
+        ]
 
     async def get_daily_snapshot(
         self, subject: str, target_date: date

@@ -1,9 +1,19 @@
 import { startTransition, useDeferredValue, useEffect, useState } from "react";
 
 import { ApexLockup } from "./components/Brand";
+import { MarkdownContent } from "./components/MarkdownContent";
 import { PortalShell, type PortalView } from "./components/PortalShell";
 import { TrendChart } from "./components/TrendChart";
-import { getBootstrap, type BootstrapResponse, type DailySnapshot, type HistoryDay } from "./lib/api";
+import {
+  getBootstrap,
+  getProducts,
+  type BootstrapResponse,
+  type DailySnapshot,
+  type FoodProduct,
+  type FoodProductsResponse,
+  type HistoryDay,
+  type PortalProfile,
+} from "./lib/api";
 import {
   formatCalories,
   formatDistance,
@@ -11,7 +21,8 @@ import {
   formatLongDate,
   formatShortDate,
   formatSignedValue,
-  markdownToExcerpt,
+  shiftIsoDate,
+  todayIsoDate,
 } from "./lib/format";
 
 const TOKEN_STORAGE_KEY = "apex.portal.accessToken";
@@ -20,6 +31,7 @@ const TREND_WINDOW_OPTIONS = [28, 56, 84, 168];
 
 type TrendMetric = "food" | "exercise" | "protein" | "load";
 type ViewStatus = "loading" | "ready" | "unlock" | "error";
+type ProductsStatus = "idle" | "loading" | "ready" | "error";
 
 /**
  * Render the main APEX progress portal.
@@ -40,12 +52,22 @@ export default function App() {
   const [trendDays, setTrendDays] = useState<number>(84);
   const [trendMetric, setTrendMetric] = useState<TrendMetric>("food");
   const [reloadNonce, setReloadNonce] = useState<number>(0);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
   const [accessToken, setAccessToken] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : window.sessionStorage.getItem(TOKEN_STORAGE_KEY),
+    typeof window === "undefined"
+      ? null
+      : window.sessionStorage.getItem(TOKEN_STORAGE_KEY),
   );
   const [portalData, setPortalData] = useState<BootstrapResponse | null>(null);
   const [status, setStatus] = useState<ViewStatus>("loading");
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [productsData, setProductsData] = useState<FoodProductsResponse | null>(
+    null,
+  );
+  const [productsStatus, setProductsStatus] =
+    useState<ProductsStatus>("idle");
+  const [productsErrorMessage, setProductsErrorMessage] = useState<string>("");
+  const [productsReloadNonce, setProductsReloadNonce] = useState<number>(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,7 +77,12 @@ export default function App() {
       setErrorMessage("");
 
       try {
-        const nextData = await getBootstrap(selectedDate, historyDays, trendDays, accessToken);
+        const nextData = await getBootstrap(
+          selectedDate,
+          historyDays,
+          trendDays,
+          accessToken,
+        );
         if (cancelled) {
           return;
         }
@@ -67,8 +94,14 @@ export default function App() {
           return;
         }
 
-        const maybeStatus = typeof error === "object" && error !== null ? Reflect.get(error, "status") : undefined;
-        const message = error instanceof Error ? error.message : "Unable to load the APEX portal.";
+        const maybeStatus =
+          typeof error === "object" && error !== null
+            ? Reflect.get(error, "status")
+            : undefined;
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unable to load the APEX portal.";
 
         if (maybeStatus === 401) {
           setPortalData(null);
@@ -89,6 +122,71 @@ export default function App() {
       cancelled = true;
     };
   }, [accessToken, historyDays, reloadNonce, selectedDate, trendDays]);
+
+  useEffect(() => {
+    setProductsData(null);
+    setProductsStatus("idle");
+    setProductsErrorMessage("");
+    setProductsReloadNonce(0);
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (activeView !== "products") {
+      return;
+    }
+
+    if (productsData !== null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadProducts() {
+      setProductsStatus("loading");
+      setProductsErrorMessage("");
+
+      try {
+        const nextProducts = await getProducts(accessToken);
+        if (cancelled) {
+          return;
+        }
+
+        setProductsData(nextProducts);
+        setProductsStatus("ready");
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        const maybeStatus =
+          typeof error === "object" && error !== null
+            ? Reflect.get(error, "status")
+            : undefined;
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unable to load the food products.";
+
+        if (maybeStatus === 401) {
+          setProductsData(null);
+          setProductsStatus("idle");
+          setStatus("unlock");
+          setErrorMessage(message);
+          return;
+        }
+
+        setProductsData(null);
+        setProductsStatus("error");
+        setProductsErrorMessage(message);
+      }
+    }
+
+    void loadProducts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, activeView, productsData, productsReloadNonce]);
 
   const deferredTrendDays = useDeferredValue(portalData?.trends.days ?? []);
 
@@ -115,45 +213,33 @@ export default function App() {
     <PortalShell
       profile={portalData.profile}
       activeView={activeView}
+      sidebarOpen={sidebarOpen}
+      onToggleSidebar={handleToggleSidebar}
+      onCloseSidebar={handleCloseSidebar}
       onChangeView={setActiveView}
       onLock={accessToken ? handleLock : undefined}
     >
-      <header className="portal-header">
-        <div>
-          <p className="portal-kicker">APEX Progress Review</p>
-          <h1>{portalData.profile.athlete_name}'s portal</h1>
-          <p className="portal-header-copy">{markdownToExcerpt(portalData.profile.profile_markdown, 180)}</p>
-        </div>
-
-        <div className="portal-header-metrics">
-          <HeaderMetric
-            label="Weight"
-            value={
-              portalData.profile.weight_kg
-                ? `${portalData.profile.weight_kg.toFixed(1)} kg`
-                : "Not set"
-            }
-          />
-          <HeaderMetric
-            label="Height"
-            value={
-              portalData.profile.height_cm
-                ? `${portalData.profile.height_cm.toFixed(0)} cm`
-                : "Not set"
-            }
-          />
-          <HeaderMetric
-            label="FTP"
-            value={portalData.profile.ftp_watts ? `${portalData.profile.ftp_watts} W` : "Not set"}
-          />
-        </div>
-      </header>
-
       {activeView === "today" ? (
         <TodayView
+          key={activeDate}
           snapshot={portalData.snapshot}
           selectedDate={activeDate}
+          todayDate={todayIsoDate()}
           onSelectDate={setSelectedDate}
+          onStepDate={handleStepDate}
+        />
+      ) : null}
+
+      {activeView === "profile" ? (
+        <ProfileView profile={portalData.profile} />
+      ) : null}
+
+      {activeView === "products" ? (
+        <FoodProductsView
+          status={productsStatus}
+          errorMessage={productsErrorMessage}
+          products={productsData?.items ?? []}
+          onRetry={handleRetryProducts}
         />
       ) : null}
 
@@ -233,6 +319,79 @@ export default function App() {
       setSelectedDate(targetDate);
       setActiveView("today");
     });
+  }
+
+  /**
+   * Step the selected day by a single calendar day.
+   *
+   * Parameters:
+   *   direction: Signed day delta to apply.
+   *
+   * Returns:
+   *   void
+   *
+   * Raises:
+   *   This helper does not raise errors directly.
+   */
+  function handleStepDate(direction: -1 | 1) {
+    startTransition(() => {
+      const nextDate = shiftIsoDate(activeDate, direction);
+      if (direction > 0 && nextDate > todayIsoDate()) {
+        return;
+      }
+
+      setSelectedDate(nextDate);
+    });
+  }
+
+  /**
+   * Reset the products view so it can fetch again after an error.
+   *
+   * Parameters:
+   *   None.
+   *
+   * Returns:
+   *   void
+   *
+   * Raises:
+   *   This helper does not raise errors directly.
+   */
+  function handleRetryProducts() {
+    setProductsStatus("idle");
+    setProductsErrorMessage("");
+    setProductsReloadNonce((current) => current + 1);
+  }
+
+  /**
+   * Toggle the mobile sidebar drawer.
+   *
+   * Parameters:
+   *   None.
+   *
+   * Returns:
+   *   void
+   *
+   * Raises:
+   *   This helper does not raise errors directly.
+   */
+  function handleToggleSidebar() {
+    setSidebarOpen((current) => !current);
+  }
+
+  /**
+   * Close the mobile sidebar drawer.
+   *
+   * Parameters:
+   *   None.
+   *
+   * Returns:
+   *   void
+   *
+   * Raises:
+   *   This helper does not raise errors directly.
+   */
+  function handleCloseSidebar() {
+    setSidebarOpen(false);
   }
 }
 
@@ -342,10 +501,12 @@ function ErrorView({
  * Parameters:
  *   snapshot: Day payload returned by the backend.
  *   selectedDate: Current date shown in the date input.
- *   onSelectDate: Callback used when the user changes the date.
+ *   todayDate: Current browser-local calendar day.
+ *   onSelectDate: Callback used when the user changes the date directly.
+ *   onStepDate: Callback used when the user moves by a single day.
  *
  * Returns:
- *   JSX.Element: Day review section with metrics, meals, and activities.
+ *   JSX.Element: Day review section with progress, meals, and activities.
  *
  * Raises:
  *   This component does not raise errors directly.
@@ -353,13 +514,19 @@ function ErrorView({
 function TodayView({
   snapshot,
   selectedDate,
+  todayDate,
   onSelectDate,
+  onStepDate,
 }: {
   snapshot: DailySnapshot;
   selectedDate: string;
+  todayDate: string;
   onSelectDate: (value: string) => void;
+  onStepDate: (direction: -1 | 1) => void;
 }) {
   const summary = snapshot.summary;
+  const [openMealIds, setOpenMealIds] = useState<number[]>([]);
+  const nextDayDisabled = selectedDate >= todayDate;
 
   return (
     <section className="portal-section">
@@ -368,57 +535,16 @@ function TodayView({
           <p className="section-kicker">Today</p>
           <h2>{formatLongDate(snapshot.date)}</h2>
           <p className="section-copy">
-            Daily targets, logged meals, and completed activities in one review
-            surface.
+            Review daily target progress first, then expand meals and activities
+            only when you need more detail.
           </p>
         </div>
 
-        <label className="date-picker">
-          <span>Date</span>
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(event) => onSelectDate(event.target.value)}
-          />
-        </label>
-      </div>
-
-      <div className="metric-grid">
-        <MetricCard
-          title="Food"
-          primary={formatCalories(summary.actual_food_calories)}
-          secondary={
-            summary.target_food_calories
-              ? `Target ${formatCalories(summary.target_food_calories)}`
-              : "Target pending"
-          }
-        />
-        <MetricCard
-          title="Exercise"
-          primary={formatCalories(summary.actual_exercise_calories)}
-          secondary={
-            summary.activities_count
-              ? `${summary.activities_count} activities logged`
-              : "No activities yet"
-          }
-        />
-        <MetricCard
-          title="Net"
-          primary={formatCalories(summary.net_calories)}
-          secondary={
-            summary.net_calories <= 0
-              ? "Deficit day so far"
-              : "Positive net intake"
-          }
-        />
-        <MetricCard
-          title="Protein"
-          primary={`${Math.round(summary.actual_protein_g)} g`}
-          secondary={
-            summary.target_protein_g
-              ? `Target ${Math.round(summary.target_protein_g)} g`
-              : "Target pending"
-          }
+        <DateNavigator
+          selectedDate={selectedDate}
+          nextDisabled={nextDayDisabled}
+          onSelectDate={onSelectDate}
+          onStepDate={onStepDate}
         />
       </div>
 
@@ -453,96 +579,236 @@ function TodayView({
         />
       </div>
 
-      <div className="split-grid">
-        <div className="panel">
-          <div className="panel-header">
-            <h3>Meals</h3>
-            <span>{summary.meal_items_count} items</span>
-          </div>
-
-          {snapshot.meals.length === 0 ? (
-            <EmptyPanel message="No meals logged for this day yet." />
-          ) : (
-            <div className="meal-list">
-              {snapshot.meals.map((meal) => (
-                <article key={meal.id} className="meal-card">
-                  <div className="meal-card-header">
-                    <div>
-                      <h4>{meal.meal_label}</h4>
-                      <p>{formatCalories(meal.total_calories)}</p>
-                    </div>
-                    <div className="meal-totals">
-                      <span>{Math.round(meal.total_protein_g)}P</span>
-                      <span>{Math.round(meal.total_carbs_g)}C</span>
-                      <span>{Math.round(meal.total_fat_g)}F</span>
-                    </div>
-                  </div>
-
-                  <ul className="meal-items">
-                    {meal.items.map((item) => (
-                      <li key={item.id}>
-                        <div>
-                          <strong>{item.ingredient_name}</strong>
-                          <span>{Math.round(item.grams)} g</span>
-                        </div>
-                        <span>{formatCalories(item.calories)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </article>
-              ))}
-            </div>
-          )}
+      <div className="panel">
+        <div className="panel-header">
+          <h3>Meals</h3>
+          <span>{summary.meal_items_count} ingredients logged</span>
         </div>
 
-        <div className="panel">
-          <div className="panel-header">
-            <h3>Activities</h3>
-            <span>{summary.activities_count} logged</span>
+        {snapshot.meals.length === 0 ? (
+          <EmptyPanel message="No meals logged for this day yet." />
+        ) : (
+          <div className="meal-list">
+            {snapshot.meals.map((meal) => (
+              <MealAccordionCard
+                key={meal.id}
+                meal={meal}
+                isOpen={openMealIds.includes(meal.id)}
+                onToggle={() => setOpenMealIds((current) => toggleMeal(current, meal.id))}
+              />
+            ))}
           </div>
+        )}
+      </div>
 
-          {snapshot.activities.length === 0 ? (
-            <EmptyPanel message="No activities logged for this day yet." />
-          ) : (
-            <div className="activity-list">
-              {snapshot.activities.map((activity) => (
-                <article key={activity.id} className="activity-card">
-                  <div className="activity-card-header">
-                    <div>
-                      <h4>{activity.title}</h4>
-                      <p>
-                        {activity.sport_type ?? "Activity"}
-                        {activity.external_source
-                          ? ` • ${activity.external_source}`
-                          : ""}
-                      </p>
-                    </div>
-                    <strong>{formatCalories(activity.calories)}</strong>
-                  </div>
-
-                  <div className="activity-stats">
-                    <span>{formatDistance(activity.distance_meters)}</span>
-                    <span>{formatDuration(activity.moving_time_seconds)}</span>
-                    <span>
-                      {activity.total_elevation_gain_meters
-                        ? `${Math.round(activity.total_elevation_gain_meters)} m+`
-                        : "0 m+"}
-                    </span>
-                    <span>
-                      {activity.average_heartrate
-                        ? `${Math.round(activity.average_heartrate)} bpm`
-                        : "HR n/a"}
-                    </span>
-                  </div>
-
-                  {activity.notes_markdown ? (
-                    <p className="activity-note">{activity.notes_markdown}</p>
-                  ) : null}
-                </article>
-              ))}
-            </div>
-          )}
+      <div className="panel">
+        <div className="panel-header">
+          <h3>Activities</h3>
+          <span>{summary.activities_count} logged</span>
         </div>
+
+        {snapshot.activities.length === 0 ? (
+          <EmptyPanel message="No activities logged for this day yet." />
+        ) : (
+          <div className="activity-list">
+            {snapshot.activities.map((activity) => (
+              <article key={activity.id} className="activity-card">
+                <div className="activity-card-header">
+                  <div>
+                    <h4>{activity.title}</h4>
+                    <p>
+                      {activity.sport_type ?? "Activity"}
+                      {activity.external_source
+                        ? ` • ${activity.external_source}`
+                        : ""}
+                    </p>
+                  </div>
+                  <strong>
+                    {activity.calories === null
+                      ? "No calorie data"
+                      : formatCalories(activity.calories)}
+                  </strong>
+                </div>
+
+                <div className="activity-stats">
+                  <span>{formatDistance(activity.distance_meters)}</span>
+                  <span>{formatDuration(activity.moving_time_seconds)}</span>
+                  <span>
+                    {activity.total_elevation_gain_meters
+                      ? `${Math.round(activity.total_elevation_gain_meters)} m+`
+                      : "0 m+"}
+                  </span>
+                  <span>
+                    {activity.average_heartrate
+                      ? `${Math.round(activity.average_heartrate)} bpm`
+                      : "HR n/a"}
+                  </span>
+                </div>
+
+                {activity.notes_markdown ? (
+                  <p className="activity-note">{activity.notes_markdown}</p>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Render the athlete profile page.
+ *
+ * Parameters:
+ *   profile: Athlete context returned by the bootstrap payload.
+ *
+ * Returns:
+ *   JSX.Element: Read-only profile summary and markdown sections.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function ProfileView({ profile }: { profile: PortalProfile }) {
+  return (
+    <section className="portal-section">
+      <div className="section-header-row">
+        <div>
+          <p className="section-kicker">Profile</p>
+          <h2>{profile.athlete_name}</h2>
+          <p className="section-copy">
+            Read-only athlete context sourced from the APEX database.
+          </p>
+        </div>
+      </div>
+
+      <div className="profile-summary-grid">
+        <ProfileStat
+          label="Weight"
+          value={
+            profile.weight_kg === null
+              ? "Not set"
+              : `${profile.weight_kg.toFixed(1)} kg`
+          }
+        />
+        <ProfileStat
+          label="Height"
+          value={
+            profile.height_cm === null
+              ? "Not set"
+              : `${profile.height_cm.toFixed(0)} cm`
+          }
+        />
+        <ProfileStat
+          label="FTP"
+          value={
+            profile.ftp_watts === null ? "Not set" : `${profile.ftp_watts} W`
+          }
+        />
+        <ProfileStat label="Subject" value={profile.subject} />
+      </div>
+
+      <ProfileDocumentSection
+        title="Profile overview"
+        markdown={profile.profile_markdown}
+      />
+      <ProfileDocumentSection
+        title="Training goals"
+        markdown={profile.training_goals_markdown}
+      />
+      <ProfileDocumentSection
+        title="Diet goals"
+        markdown={profile.diet_goals_markdown}
+      />
+    </section>
+  );
+}
+
+/**
+ * Render the reusable food products page.
+ *
+ * Parameters:
+ *   status: Current async status for the products fetch.
+ *   errorMessage: Error shown when the fetch fails.
+ *   products: Cached product rows.
+ *   onRetry: Callback used to retry after an error.
+ *
+ * Returns:
+ *   JSX.Element: Food product table or supporting empty/loading states.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function FoodProductsView({
+  status,
+  errorMessage,
+  products,
+  onRetry,
+}: {
+  status: ProductsStatus;
+  errorMessage: string;
+  products: FoodProduct[];
+  onRetry: () => void;
+}) {
+  return (
+    <section className="portal-section">
+      <div className="section-header-row">
+        <div>
+          <p className="section-kicker">Food products</p>
+          <h2>Reusable catalog</h2>
+          <p className="section-copy">
+            Review the saved food products that power faster meal logging in
+            APEX.
+          </p>
+        </div>
+      </div>
+
+      <div className="panel">
+        {status === "loading" || status === "idle" ? (
+          <EmptyPanel message="Loading food products..." />
+        ) : null}
+
+        {status === "error" ? (
+          <div className="inline-error">
+            <p>{errorMessage}</p>
+            <button type="button" onClick={onRetry}>
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        {status === "ready" && products.length === 0 ? (
+          <EmptyPanel message="No reusable food products were found for this athlete." />
+        ) : null}
+
+        {status === "ready" && products.length > 0 ? (
+          <div className="products-table-wrap">
+            <table className="products-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Default serving</th>
+                  <th>Calories / 100g</th>
+                  <th>Carbs</th>
+                  <th>Protein</th>
+                  <th>Fat</th>
+                </tr>
+              </thead>
+              <tbody>
+                {products.map((product) => (
+                  <tr key={product.id}>
+                    <td>{product.name}</td>
+                    <td>{formatTableValue(product.default_serving_g, "g")}</td>
+                    <td>{formatTableValue(product.calories_per_100g, "kcal")}</td>
+                    <td>{formatTableValue(product.carbs_g_per_100g, "g")}</td>
+                    <td>{formatTableValue(product.protein_g_per_100g, "g")}</td>
+                    <td>{formatTableValue(product.fat_g_per_100g, "g")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -739,6 +1005,277 @@ function TrendsView({
 }
 
 /**
+ * Render the date navigator used above the daily review.
+ *
+ * Parameters:
+ *   selectedDate: Business date currently displayed.
+ *   nextDisabled: Whether the next-day button should be disabled.
+ *   onSelectDate: Callback used when the user picks a date directly.
+ *   onStepDate: Callback used when the user moves by one day.
+ *
+ * Returns:
+ *   JSX.Element: Arrow controls flanking the date field.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function DateNavigator({
+  selectedDate,
+  nextDisabled,
+  onSelectDate,
+  onStepDate,
+}: {
+  selectedDate: string;
+  nextDisabled: boolean;
+  onSelectDate: (value: string) => void;
+  onStepDate: (direction: -1 | 1) => void;
+}) {
+  return (
+    <div className="date-picker date-navigator">
+      <span>Date</span>
+      <div className="date-navigator-row">
+        <button
+          type="button"
+          className="date-step-button"
+          aria-label="Previous day"
+          onClick={() => onStepDate(-1)}
+        >
+          ←
+        </button>
+
+        <input
+          type="date"
+          value={selectedDate}
+          onChange={(event) => onSelectDate(event.target.value)}
+        />
+
+        <button
+          type="button"
+          className="date-step-button"
+          aria-label="Next day"
+          disabled={nextDisabled}
+          onClick={() => onStepDate(1)}
+        >
+          →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Render one meal as a collapsible details block.
+ *
+ * Parameters:
+ *   meal: Meal and ingredient data for the selected day.
+ *   isOpen: Whether the meal is currently expanded.
+ *   onToggle: Callback used when the meal opens or closes.
+ *
+ * Returns:
+ *   JSX.Element: Accordion-style meal card with ingredient details.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function MealAccordionCard({
+  meal,
+  isOpen,
+  onToggle,
+}: {
+  meal: DailySnapshot["meals"][number];
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <details className="meal-card" open={isOpen}>
+      <summary
+        className="meal-summary"
+        onClick={(event) => {
+          event.preventDefault();
+          onToggle();
+        }}
+      >
+        <div className="meal-summary-copy">
+          <h4>{meal.meal_label}</h4>
+          <p>{formatCalories(meal.total_calories)}</p>
+        </div>
+
+        <div className="meal-summary-meta">
+          <span className="meal-item-count">
+            {meal.items.length} {meal.items.length === 1 ? "item" : "items"}
+          </span>
+          <div className="meal-totals">
+            <NutrientBadge
+              tone="calories"
+              label="Calories"
+              value={formatCompactAmount(meal.total_calories, "kcal")}
+            />
+            <NutrientBadge
+              tone="protein"
+              label="Protein"
+              value={formatCompactAmount(meal.total_protein_g, "g")}
+            />
+            <NutrientBadge
+              tone="carbs"
+              label="Carbs"
+              value={formatCompactAmount(meal.total_carbs_g, "g")}
+            />
+            <NutrientBadge
+              tone="fat"
+              label="Fat"
+              value={formatCompactAmount(meal.total_fat_g, "g")}
+            />
+          </div>
+        </div>
+      </summary>
+
+      {meal.notes_markdown ? (
+        <p className="meal-note">{meal.notes_markdown}</p>
+      ) : null}
+
+      <div className="meal-items">
+        {meal.items.map((item) => (
+          <MealItemRow key={item.id} item={item} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+/**
+ * Render one ingredient row inside an expanded meal.
+ *
+ * Parameters:
+ *   item: Logged meal item with per-serving nutrition values.
+ *
+ * Returns:
+ *   JSX.Element: Ingredient name, grams, and macro badges.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function MealItemRow({
+  item,
+}: {
+  item: DailySnapshot["meals"][number]["items"][number];
+}) {
+  return (
+    <div className="meal-item-row">
+      <div className="meal-item-copy">
+        <strong>{item.ingredient_name}</strong>
+        <span>{Math.round(item.grams)} g</span>
+      </div>
+
+      <div className="meal-item-metrics">
+        <NutrientBadge
+          tone="calories"
+          label="Calories"
+          value={formatCompactAmount(item.calories, "kcal")}
+        />
+        <NutrientBadge
+          tone="protein"
+          label="Protein"
+          value={formatCompactAmount(item.protein_g, "g")}
+        />
+        <NutrientBadge
+          tone="carbs"
+          label="Carbs"
+          value={formatCompactAmount(item.carbs_g, "g")}
+        />
+        <NutrientBadge
+          tone="fat"
+          label="Fat"
+          value={formatCompactAmount(item.fat_g, "g")}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Render one reusable nutrient badge for meal summaries and rows.
+ *
+ * Parameters:
+ *   tone: Color treatment used by the badge.
+ *   label: Accessible label for the nutrient.
+ *   value: Visible formatted nutrient value.
+ *
+ * Returns:
+ *   JSX.Element: Styled nutrient badge.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function NutrientBadge({
+  tone,
+  label,
+  value,
+}: {
+  tone: "calories" | "protein" | "carbs" | "fat";
+  label: string;
+  value: string;
+}) {
+  return (
+    <span className={`nutrient-badge ${tone}`}>
+      <em>{label}</em>
+      <strong>{value}</strong>
+    </span>
+  );
+}
+
+/**
+ * Render one profile document section.
+ *
+ * Parameters:
+ *   title: Section title shown above the markdown content.
+ *   markdown: Raw markdown body stored in the backend.
+ *
+ * Returns:
+ *   JSX.Element: Panel wrapper around rendered markdown.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function ProfileDocumentSection({
+  title,
+  markdown,
+}: {
+  title: string;
+  markdown: string;
+}) {
+  return (
+    <article className="panel profile-document">
+      <div className="panel-header">
+        <h3>{title}</h3>
+      </div>
+      <MarkdownContent markdown={markdown} />
+    </article>
+  );
+}
+
+/**
+ * Render one profile summary stat.
+ *
+ * Parameters:
+ *   label: Visible summary label.
+ *   value: Visible summary value.
+ *
+ * Returns:
+ *   JSX.Element: Compact profile stat tile.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function ProfileStat({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="profile-stat">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
+  );
+}
+
+/**
  * Render one compact metric tile.
  *
  * Parameters:
@@ -767,28 +1304,6 @@ function MetricCard({
       <strong>{primary}</strong>
       <span>{secondary}</span>
     </article>
-  );
-}
-
-/**
- * Render a compact header metric chip.
- *
- * Parameters:
- *   label: Metric label.
- *   value: Metric value.
- *
- * Returns:
- *   JSX.Element: Small header metric.
- *
- * Raises:
- *   This component does not raise errors directly.
- */
-function HeaderMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="header-metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
   );
 }
 
@@ -908,6 +1423,71 @@ function WindowSelector({
 }
 
 /**
+ * Toggle one meal identifier inside the open accordion state.
+ *
+ * Parameters:
+ *   current: Currently open meal identifiers.
+ *   mealId: Meal identifier to toggle.
+ *
+ * Returns:
+ *   number[]: Updated open meal identifiers.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function toggleMeal(current: number[], mealId: number): number[] {
+  if (current.includes(mealId)) {
+    return current.filter((currentId) => currentId !== mealId);
+  }
+
+  return [...current, mealId];
+}
+
+/**
+ * Format a compact nutrient amount for meal summaries and ingredient rows.
+ *
+ * Parameters:
+ *   value: Numeric value to format.
+ *   unit: Unit suffix to append.
+ *
+ * Returns:
+ *   string: Rounded compact amount string.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatCompactAmount(value: number, unit: "g" | "kcal"): string {
+  const roundedValue =
+    unit === "kcal" ? Math.round(value) : Number(value.toFixed(value < 10 ? 1 : 0));
+  return `${roundedValue} ${unit}`;
+}
+
+/**
+ * Format a numeric table value while preserving empty states.
+ *
+ * Parameters:
+ *   value: Numeric value to format, or `null` when missing.
+ *   suffix: Unit suffix to append.
+ *
+ * Returns:
+ *   string: Table-safe formatted value.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatTableValue(value: number | null, suffix: string): string {
+  if (value === null) {
+    return "Not set";
+  }
+
+  const roundedValue =
+    Number.isInteger(value) || Math.abs(value) >= 10
+      ? value.toFixed(0)
+      : value.toFixed(1);
+  return `${roundedValue} ${suffix}`;
+}
+
+/**
  * Return the display configuration for one trend metric.
  *
  * Parameters:
@@ -933,7 +1513,7 @@ function getTrendMetricMeta(metric: TrendMetric) {
     return {
       label: "Protein intake",
       subtitle: "Daily protein intake in grams",
-      color: "#F97316",
+      color: "#2563EB",
       pickValue: (day: HistoryDay) => day.actual_protein_g,
     };
   }
@@ -950,7 +1530,7 @@ function getTrendMetricMeta(metric: TrendMetric) {
   return {
     label: "Food calories",
     subtitle: "Daily logged food intake",
-    color: "#2DD4BF",
+    color: "#16A34A",
     pickValue: (day: HistoryDay) => day.actual_food_calories,
   };
 }
