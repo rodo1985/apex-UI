@@ -153,6 +153,9 @@ class FakePortalStore(PortalStore):
                 HistoryDay(
                     date=date_to,
                     target_food_calories=2490,
+                    target_protein_g=150,
+                    target_carbs_g=290,
+                    target_fat_g=68,
                     actual_food_calories=725,
                     actual_exercise_calories=976,
                     net_calories=-251,
@@ -185,6 +188,9 @@ class FakePortalStore(PortalStore):
                 HistoryDay(
                     date=date_to,
                     target_food_calories=2490,
+                    target_protein_g=150,
+                    target_carbs_g=290,
+                    target_fat_g=68,
                     actual_food_calories=725,
                     actual_exercise_calories=976,
                     net_calories=-251,
@@ -251,6 +257,8 @@ def test_bootstrap_returns_expected_shape() -> None:
     assert payload.profile.athlete_name == "Sergio"
     assert payload.snapshot.summary.meals_count == 2
     assert payload.history.days[0].activities_count == 1
+    assert payload.history.days[0].target_protein_g == 150
+    assert payload.trends.days[0].target_carbs_g == 290
 
 
 def test_protected_routes_require_bearer_token() -> None:

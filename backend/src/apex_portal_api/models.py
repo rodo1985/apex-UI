@@ -262,6 +262,9 @@ class HistoryDay(BaseModel):
         date: Business date represented by the row.
         target_food_calories: Planned food calories.
         actual_food_calories: Logged food calories.
+        target_protein_g: Planned protein target.
+        target_carbs_g: Planned carbohydrate target.
+        target_fat_g: Planned fat target.
         actual_exercise_calories: Logged exercise calories.
         net_calories: Food calories minus exercise calories.
         actual_protein_g: Logged protein grams.
@@ -284,6 +287,9 @@ class HistoryDay(BaseModel):
 
     date: date
     target_food_calories: float | None = None
+    target_protein_g: float | None = None
+    target_carbs_g: float | None = None
+    target_fat_g: float | None = None
     actual_food_calories: float = 0
     actual_exercise_calories: float = 0
     net_calories: float = 0

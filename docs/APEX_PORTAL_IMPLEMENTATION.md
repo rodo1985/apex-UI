@@ -60,7 +60,10 @@ flowchart LR
 - `frontend/src/components/Brand.tsx`
   APEX icon and wordmark components reused across the portal.
 - `frontend/src/components/PortalShell.tsx`
-  Sidebar drawer, mobile navigation bar, and content shell.
+  Collapsible desktop rail, mobile drawer, and shared content shell.
+- `frontend/src/components/TrendChart.tsx`
+  Interactive multi-series SVG chart with point tooltips for achieved versus
+  target trend views.
 - `frontend/src/lib/api.ts`
   Small fetch client for the backend endpoints, including the product catalog.
 
@@ -135,10 +138,12 @@ The current read-only routes are:
 The user-facing outputs are:
 
 - a today snapshot with stacked meal and activity detail
-- a profile page with metrics and stored markdown documents
-- a reusable food product table
-- a history list with quick adherence and activity context
-- a trends view showing longer-term evolution
+- a profile page with metrics and stored markdown documents in open-layout
+  sections
+- a reusable food product table with search and sort controls
+- a history list with current-versus-target nutrition chips for each logged day
+- a trends view showing longer-term evolution plus target overlays for food and
+  macro metrics
 
 ## Dependencies
 

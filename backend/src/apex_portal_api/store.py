@@ -697,6 +697,9 @@ class PostgresPortalStore(PortalStore):
             SELECT
                 tracked_dates.day,
                 dt.target_food_calories,
+                dt.target_protein_g,
+                dt.target_carbs_g,
+                dt.target_fat_g,
                 COALESCE(mt.actual_food_calories, 0) AS actual_food_calories,
                 COALESCE(
                     at.actual_exercise_calories,
@@ -738,6 +741,9 @@ class PostgresPortalStore(PortalStore):
             HistoryDay(
                 date=row["day"],
                 target_food_calories=_nullable_float(row, "target_food_calories"),
+                target_protein_g=_nullable_float(row, "target_protein_g"),
+                target_carbs_g=_nullable_float(row, "target_carbs_g"),
+                target_fat_g=_nullable_float(row, "target_fat_g"),
                 actual_food_calories=_as_float(row["actual_food_calories"]) or 0,
                 actual_exercise_calories=_as_float(row["actual_exercise_calories"])
                 or 0,

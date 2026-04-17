@@ -20,7 +20,6 @@ import {
   formatDuration,
   formatLongDate,
   formatShortDate,
-  formatSignedValue,
   shiftIsoDate,
   todayIsoDate,
 } from "./lib/format";
@@ -29,7 +28,16 @@ const TOKEN_STORAGE_KEY = "apex.portal.accessToken";
 const HISTORY_WINDOW_OPTIONS = [14, 28, 56, 84];
 const TREND_WINDOW_OPTIONS = [28, 56, 84, 168];
 
-type TrendMetric = "food" | "exercise" | "protein" | "load";
+type TrendMetric = "food" | "exercise" | "protein" | "carbs" | "fat" | "load";
+type ProgressTone = "food" | "protein" | "carbs" | "fat";
+type ProductsSortKey =
+  | "name"
+  | "default_serving_g"
+  | "calories_per_100g"
+  | "carbs_g_per_100g"
+  | "protein_g_per_100g"
+  | "fat_g_per_100g";
+type SortDirection = "asc" | "desc";
 type ViewStatus = "loading" | "ready" | "unlock" | "error";
 type ProductsStatus = "idle" | "loading" | "ready" | "error";
 
@@ -46,13 +54,18 @@ type ProductsStatus = "idle" | "loading" | "ready" | "error";
  *   This component does not raise errors directly.
  */
 export default function App() {
+  const [isCompactLayout, setIsCompactLayout] = useState<boolean>(() =>
+    readCompactLayoutPreference(),
+  );
   const [activeView, setActiveView] = useState<PortalView>("today");
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [historyDays, setHistoryDays] = useState<number>(28);
   const [trendDays, setTrendDays] = useState<number>(84);
   const [trendMetric, setTrendMetric] = useState<TrendMetric>("food");
   const [reloadNonce, setReloadNonce] = useState<number>(0);
-  const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+  const [sidebarVisible, setSidebarVisible] = useState<boolean>(() =>
+    readDefaultSidebarVisibility(),
+  );
   const [accessToken, setAccessToken] = useState<string | null>(() =>
     typeof window === "undefined"
       ? null
@@ -68,6 +81,55 @@ export default function App() {
     useState<ProductsStatus>("idle");
   const [productsErrorMessage, setProductsErrorMessage] = useState<string>("");
   const [productsReloadNonce, setProductsReloadNonce] = useState<number>(0);
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia("(max-width: 1180px)");
+
+    /**
+     * Apply the responsive shell mode for the current viewport.
+     *
+     * Parameters:
+     *   matchesCompactLayout: Whether the compact layout breakpoint is active.
+     *
+     * Returns:
+     *   void
+     *
+     * Raises:
+     *   This helper does not raise errors directly.
+     */
+    function applyLayout(matchesCompactLayout: boolean) {
+      setIsCompactLayout(matchesCompactLayout);
+      setSidebarVisible(!matchesCompactLayout);
+    }
+
+    applyLayout(mediaQuery.matches);
+
+    /**
+     * Keep the portal shell aligned with media-query changes.
+     *
+     * Parameters:
+     *   event: Browser media-query change payload.
+     *
+     * Returns:
+     *   void
+     *
+     * Raises:
+     *   This helper does not raise errors directly.
+     */
+    function handleMediaQueryChange(event: MediaQueryListEvent) {
+      applyLayout(event.matches);
+    }
+
+    mediaQuery.addEventListener("change", handleMediaQueryChange);
+    return () => mediaQuery.removeEventListener("change", handleMediaQueryChange);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,9 +273,9 @@ export default function App() {
 
   return (
     <PortalShell
-      profile={portalData.profile}
       activeView={activeView}
-      sidebarOpen={sidebarOpen}
+      isCompactLayout={isCompactLayout}
+      sidebarVisible={sidebarVisible}
       onToggleSidebar={handleToggleSidebar}
       onCloseSidebar={handleCloseSidebar}
       onChangeView={setActiveView}
@@ -375,7 +437,7 @@ export default function App() {
    *   This helper does not raise errors directly.
    */
   function handleToggleSidebar() {
-    setSidebarOpen((current) => !current);
+    setSidebarVisible((current) => !current);
   }
 
   /**
@@ -391,8 +453,49 @@ export default function App() {
    *   This helper does not raise errors directly.
    */
   function handleCloseSidebar() {
-    setSidebarOpen(false);
+    if (isCompactLayout) {
+      setSidebarVisible(false);
+    }
   }
+}
+
+/**
+ * Read whether the compact responsive layout should be active.
+ *
+ * Parameters:
+ *   None.
+ *
+ * Returns:
+ *   boolean: `true` when the viewport matches the compact breakpoint.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function readCompactLayoutPreference(): boolean {
+  if (
+    typeof window === "undefined" ||
+    typeof window.matchMedia !== "function"
+  ) {
+    return false;
+  }
+
+  return window.matchMedia("(max-width: 1180px)").matches;
+}
+
+/**
+ * Read the default sidebar visibility for the current viewport size.
+ *
+ * Parameters:
+ *   None.
+ *
+ * Returns:
+ *   boolean: `true` for desktop layouts, `false` for compact layouts.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function readDefaultSidebarVisibility(): boolean {
+  return !readCompactLayoutPreference();
 }
 
 /**
@@ -551,6 +654,7 @@ function TodayView({
       <div className="progress-grid">
         <ProgressPanel
           title="Food calories"
+          tone="food"
           current={summary.actual_food_calories}
           target={summary.target_food_calories}
           remainder={summary.remaining_food_calories}
@@ -558,6 +662,7 @@ function TodayView({
         />
         <ProgressPanel
           title="Protein"
+          tone="protein"
           current={summary.actual_protein_g}
           target={summary.target_protein_g}
           remainder={summary.remaining_protein_g}
@@ -565,6 +670,7 @@ function TodayView({
         />
         <ProgressPanel
           title="Carbs"
+          tone="carbs"
           current={summary.actual_carbs_g}
           target={summary.target_carbs_g}
           remainder={summary.remaining_carbs_g}
@@ -572,6 +678,7 @@ function TodayView({
         />
         <ProgressPanel
           title="Fat"
+          tone="fat"
           current={summary.actual_fat_g}
           target={summary.target_fat_g}
           remainder={summary.remaining_fat_g}
@@ -612,43 +719,7 @@ function TodayView({
         ) : (
           <div className="activity-list">
             {snapshot.activities.map((activity) => (
-              <article key={activity.id} className="activity-card">
-                <div className="activity-card-header">
-                  <div>
-                    <h4>{activity.title}</h4>
-                    <p>
-                      {activity.sport_type ?? "Activity"}
-                      {activity.external_source
-                        ? ` • ${activity.external_source}`
-                        : ""}
-                    </p>
-                  </div>
-                  <strong>
-                    {activity.calories === null
-                      ? "No calorie data"
-                      : formatCalories(activity.calories)}
-                  </strong>
-                </div>
-
-                <div className="activity-stats">
-                  <span>{formatDistance(activity.distance_meters)}</span>
-                  <span>{formatDuration(activity.moving_time_seconds)}</span>
-                  <span>
-                    {activity.total_elevation_gain_meters
-                      ? `${Math.round(activity.total_elevation_gain_meters)} m+`
-                      : "0 m+"}
-                  </span>
-                  <span>
-                    {activity.average_heartrate
-                      ? `${Math.round(activity.average_heartrate)} bpm`
-                      : "HR n/a"}
-                  </span>
-                </div>
-
-                {activity.notes_markdown ? (
-                  <p className="activity-note">{activity.notes_markdown}</p>
-                ) : null}
-              </article>
+              <ActivityCard key={activity.id} activity={activity} />
             ))}
           </div>
         )}
@@ -705,7 +776,6 @@ function ProfileView({ profile }: { profile: PortalProfile }) {
             profile.ftp_watts === null ? "Not set" : `${profile.ftp_watts} W`
           }
         />
-        <ProfileStat label="Subject" value={profile.subject} />
       </div>
 
       <ProfileDocumentSection
@@ -750,6 +820,18 @@ function FoodProductsView({
   products: FoodProduct[];
   onRetry: () => void;
 }) {
+  const [searchTerm, setSearchTerm] = useState<string>("");
+  const [sortKey, setSortKey] = useState<ProductsSortKey>("name");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const deferredSearchTerm = useDeferredValue(searchTerm.trim().toLowerCase());
+  const visibleProducts = sortProducts(
+    products.filter((product) =>
+      matchesProductSearch(product, deferredSearchTerm),
+    ),
+    sortKey,
+    sortDirection,
+  );
+
   return (
     <section className="portal-section">
       <div className="section-header-row">
@@ -782,31 +864,85 @@ function FoodProductsView({
         ) : null}
 
         {status === "ready" && products.length > 0 ? (
-          <div className="products-table-wrap">
-            <table className="products-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Default serving</th>
-                  <th>Calories / 100g</th>
-                  <th>Carbs</th>
-                  <th>Protein</th>
-                  <th>Fat</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map((product) => (
-                  <tr key={product.id}>
-                    <td>{product.name}</td>
-                    <td>{formatTableValue(product.default_serving_g, "g")}</td>
-                    <td>{formatTableValue(product.calories_per_100g, "kcal")}</td>
-                    <td>{formatTableValue(product.carbs_g_per_100g, "g")}</td>
-                    <td>{formatTableValue(product.protein_g_per_100g, "g")}</td>
-                    <td>{formatTableValue(product.fat_g_per_100g, "g")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="products-catalog">
+            <div className="products-toolbar">
+              <label className="products-toolbar-field products-search-field">
+                <span>Search</span>
+                <input
+                  type="search"
+                  value={searchTerm}
+                  placeholder="Search by food or brand"
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                />
+              </label>
+
+              <label className="products-toolbar-field">
+                <span>Sort</span>
+                <select
+                  value={sortKey}
+                  onChange={(event) =>
+                    setSortKey(event.target.value as ProductsSortKey)
+                  }
+                >
+                  <option value="name">Name</option>
+                  <option value="default_serving_g">Default serving</option>
+                  <option value="calories_per_100g">Calories / 100g</option>
+                  <option value="carbs_g_per_100g">Carbs</option>
+                  <option value="protein_g_per_100g">Protein</option>
+                  <option value="fat_g_per_100g">Fat</option>
+                </select>
+              </label>
+
+              <label className="products-toolbar-field">
+                <span>Direction</span>
+                <select
+                  value={sortDirection}
+                  onChange={(event) =>
+                    setSortDirection(event.target.value as SortDirection)
+                  }
+                >
+                  <option value="asc">Ascending</option>
+                  <option value="desc">Descending</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="products-toolbar-caption">
+              <span>
+                {visibleProducts.length} of {products.length} foods shown
+              </span>
+            </div>
+
+            {visibleProducts.length === 0 ? (
+              <EmptyPanel message="No food products match the current search." />
+            ) : (
+              <div className="products-table-wrap">
+                <table className="products-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Default serving</th>
+                      <th>Calories / 100g</th>
+                      <th>Carbs</th>
+                      <th>Protein</th>
+                      <th>Fat</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleProducts.map((product) => (
+                      <tr key={product.id}>
+                        <td>{product.name}</td>
+                        <td>{formatTableValue(product.default_serving_g, "g")}</td>
+                        <td>{formatTableValue(product.calories_per_100g, "kcal")}</td>
+                        <td>{formatTableValue(product.carbs_g_per_100g, "g")}</td>
+                        <td>{formatTableValue(product.protein_g_per_100g, "g")}</td>
+                        <td>{formatTableValue(product.fat_g_per_100g, "g")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         ) : null}
       </div>
@@ -874,17 +1010,58 @@ function HistoryView({
                 className={`history-row${day.date === selectedDate ? " active" : ""}`}
                 onClick={() => onOpenDay(day.date)}
               >
-                <div className="history-row-primary">
-                  <strong>{formatLongDate(day.date)}</strong>
-                  <span>
-                    {day.meals_count} meals • {day.activities_count} activities
+                <div className="history-row-header">
+                  <div className="history-row-primary">
+                    <strong>{formatLongDate(day.date)}</strong>
+                    <span>{formatTrackedCounts(day.meals_count, day.activities_count)}</span>
+                  </div>
+                  <span className="history-row-date-badge">
+                    {day.date === selectedDate ? "Open day" : "Review day"}
                   </span>
                 </div>
+
                 <div className="history-row-metrics">
-                  <span>{formatCalories(day.actual_food_calories)}</span>
-                  <span>{formatCalories(day.actual_exercise_calories)}</span>
-                  <span>{formatDistance(day.total_distance_meters)}</span>
-                  <span>{formatSignedValue(day.net_calories, "kcal")}</span>
+                  <SummaryChip
+                    tone="food"
+                    label="Food"
+                    value={formatCurrentTargetValue(
+                      day.actual_food_calories,
+                      day.target_food_calories,
+                      "kcal",
+                    )}
+                  />
+                  <SummaryChip
+                    tone="exercise"
+                    label="Exercise"
+                    value={formatCompactAmount(day.actual_exercise_calories, "kcal")}
+                  />
+                  <SummaryChip
+                    tone="protein"
+                    label="Protein"
+                    value={formatCurrentTargetValue(
+                      day.actual_protein_g,
+                      day.target_protein_g,
+                      "g",
+                    )}
+                  />
+                  <SummaryChip
+                    tone="carbs"
+                    label="Carbs"
+                    value={formatCurrentTargetValue(
+                      day.actual_carbs_g,
+                      day.target_carbs_g,
+                      "g",
+                    )}
+                  />
+                  <SummaryChip
+                    tone="fat"
+                    label="Fat"
+                    value={formatCurrentTargetValue(
+                      day.actual_fat_g,
+                      day.target_fat_g,
+                      "g",
+                    )}
+                  />
                 </div>
               </button>
             ))
@@ -929,6 +1106,7 @@ function TrendsView({
 }) {
   const metricMeta = getTrendMetricMeta(trendMetric);
   const chartValues = days.map((day) => metricMeta.pickValue(day));
+  const targetValues = days.map((day) => metricMeta.pickTarget(day));
   const chartLabels = days.map((day) => formatShortDate(day.date));
 
   return (
@@ -952,7 +1130,9 @@ function TrendsView({
       </div>
 
       <div className="trend-toolbar">
-        {(["food", "exercise", "protein", "load"] as TrendMetric[]).map(
+        {(
+          ["food", "exercise", "protein", "carbs", "fat", "load"] as TrendMetric[]
+        ).map(
           (metric) => (
             <button
               key={metric}
@@ -973,8 +1153,13 @@ function TrendsView({
         </div>
         <TrendChart
           values={chartValues}
+          comparisonValues={targetValues}
           labels={chartLabels}
           accent={metricMeta.color}
+          comparisonAccent={metricMeta.targetColor}
+          valueLabel={metricMeta.valueLabel}
+          comparisonLabel={metricMeta.targetLabel}
+          formatValue={metricMeta.formatValue}
         />
       </div>
 
@@ -1032,7 +1217,6 @@ function DateNavigator({
 }) {
   return (
     <div className="date-picker date-navigator">
-      <span>Date</span>
       <div className="date-navigator-row">
         <button
           type="button"
@@ -1097,7 +1281,6 @@ function MealAccordionCard({
       >
         <div className="meal-summary-copy">
           <h4>{meal.meal_label}</h4>
-          <p>{formatCalories(meal.total_calories)}</p>
         </div>
 
         <div className="meal-summary-meta">
@@ -1139,6 +1322,78 @@ function MealAccordionCard({
         ))}
       </div>
     </details>
+  );
+}
+
+/**
+ * Render one logged activity card.
+ *
+ * Parameters:
+ *   activity: Activity detail for the selected day.
+ *
+ * Returns:
+ *   JSX.Element: Activity card with highlighted summary chips and notes.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function ActivityCard({
+  activity,
+}: {
+  activity: DailySnapshot["activities"][number];
+}) {
+  return (
+    <article className="activity-card">
+      <div className="activity-card-header">
+        <div>
+          <h4>{activity.title}</h4>
+          <p>
+            {activity.sport_type ?? "Activity"}
+            {activity.external_source ? ` • ${activity.external_source}` : ""}
+          </p>
+        </div>
+      </div>
+
+      <div className="activity-highlights">
+        <SummaryChip
+          tone="food"
+          label="Calories"
+          value={
+            activity.calories === null
+              ? "No calorie data"
+              : formatCompactAmount(activity.calories, "kcal")
+          }
+        />
+        {activity.suffer_score !== null ? (
+          <SummaryChip
+            tone="load"
+            label="Training load"
+            value={Math.round(activity.suffer_score).toLocaleString()}
+          />
+        ) : null}
+      </div>
+
+      <div className="activity-stats">
+        <span>Distance {formatDistance(activity.distance_meters)}</span>
+        <span>Time {formatDuration(activity.moving_time_seconds)}</span>
+        <span>
+          Climb{" "}
+          {activity.total_elevation_gain_meters
+            ? `${Math.round(activity.total_elevation_gain_meters)} m+`
+            : "0 m+"}
+        </span>
+        <span>
+          Avg HR{" "}
+          {activity.average_heartrate
+            ? `${Math.round(activity.average_heartrate)} bpm`
+            : "n/a"}
+        </span>
+      </div>
+
+      {activity.notes_markdown ? (
+        <p className="activity-note">{activity.notes_markdown}</p>
+      ) : null}
+    </article>
   );
 }
 
@@ -1224,6 +1479,37 @@ function NutrientBadge({
 }
 
 /**
+ * Render one compact summary chip for history and activity metadata.
+ *
+ * Parameters:
+ *   tone: Color treatment used by the chip.
+ *   label: Visible chip label.
+ *   value: Formatted value shown on the right.
+ *
+ * Returns:
+ *   JSX.Element: Styled summary chip.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function SummaryChip({
+  tone,
+  label,
+  value,
+}: {
+  tone: "food" | "exercise" | "protein" | "carbs" | "fat" | "load";
+  label: string;
+  value: string;
+}) {
+  return (
+    <span className={`summary-chip ${tone}`}>
+      <em>{label}</em>
+      <strong>{value}</strong>
+    </span>
+  );
+}
+
+/**
  * Render one profile document section.
  *
  * Parameters:
@@ -1244,10 +1530,8 @@ function ProfileDocumentSection({
   markdown: string;
 }) {
   return (
-    <article className="panel profile-document">
-      <div className="panel-header">
-        <h3>{title}</h3>
-      </div>
+    <article className="profile-document-section">
+      <h3>{title}</h3>
       <MarkdownContent markdown={markdown} />
     </article>
   );
@@ -1325,21 +1609,24 @@ function MetricCard({
  */
 function ProgressPanel({
   title,
+  tone,
   current,
   target,
   remainder,
   unit,
 }: {
   title: string;
+  tone: ProgressTone;
   current: number;
   target: number | null;
   remainder: number | null;
   unit: "kcal" | "g";
 }) {
   const progress = target ? Math.min((current / target) * 100, 100) : 0;
+  const overflow = target && current > target ? Math.min(((current - target) / target) * 100, 100) : 0;
 
   return (
-    <article className="progress-panel">
+    <article className={`progress-panel tone-${tone}${overflow > 0 ? " over-target" : ""}`}>
       <div className="panel-header">
         <h3>{title}</h3>
         <span>
@@ -1350,13 +1637,12 @@ function ProgressPanel({
         {Math.round(current)} {unit}
       </strong>
       <div className="progress-track" aria-hidden="true">
-        <div className="progress-fill" style={{ width: `${progress}%` }} />
+        <div className={`progress-fill tone-${tone}`} style={{ width: `${progress}%` }} />
+        {overflow > 0 ? (
+          <div className="progress-overflow" style={{ width: `${overflow}%` }} />
+        ) : null}
       </div>
-      <p>
-        {remainder === null
-          ? "Target not set yet."
-          : `${Math.round(remainder)} ${unit} remaining`}
-      </p>
+      <p>{formatProgressRemainder(remainder, unit)}</p>
     </article>
   );
 }
@@ -1463,6 +1749,65 @@ function formatCompactAmount(value: number, unit: "g" | "kcal"): string {
 }
 
 /**
+ * Format a current-versus-target label for compact summary chips.
+ *
+ * Parameters:
+ *   current: Logged value for the day.
+ *   target: Optional planned target for the day.
+ *   unit: Unit suffix shared by the value and target.
+ *
+ * Returns:
+ *   string: Readable current/target label.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatCurrentTargetValue(
+  current: number,
+  target: number | null,
+  unit: "g" | "kcal",
+): string {
+  const currentValue =
+    unit === "kcal"
+      ? Math.round(current).toLocaleString()
+      : Math.round(current).toLocaleString();
+
+  if (target === null) {
+    return `${currentValue} ${unit}`;
+  }
+
+  return `${currentValue} / ${Math.round(target).toLocaleString()} ${unit}`;
+}
+
+/**
+ * Format the supporting copy shown under a progress panel.
+ *
+ * Parameters:
+ *   remainder: Remaining target value, or `null` when no target exists.
+ *   unit: Unit suffix to append.
+ *
+ * Returns:
+ *   string: Progress support label for remaining or exceeded values.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatProgressRemainder(
+  remainder: number | null,
+  unit: "g" | "kcal",
+): string {
+  if (remainder === null) {
+    return "Target not set yet.";
+  }
+
+  if (remainder < 0) {
+    return `Exceeded by ${Math.round(Math.abs(remainder))} ${unit}`;
+  }
+
+  return `${Math.round(remainder)} ${unit} remaining`;
+}
+
+/**
  * Format a numeric table value while preserving empty states.
  *
  * Parameters:
@@ -1488,6 +1833,118 @@ function formatTableValue(value: number | null, suffix: string): string {
 }
 
 /**
+ * Format the meals and activities count summary for one history day.
+ *
+ * Parameters:
+ *   mealsCount: Number of meals logged.
+ *   activitiesCount: Number of activities logged.
+ *
+ * Returns:
+ *   string: Short readable count summary.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatTrackedCounts(
+  mealsCount: number,
+  activitiesCount: number,
+): string {
+  const mealLabel = mealsCount === 1 ? "meal" : "meals";
+  const activityLabel = activitiesCount === 1 ? "activity" : "activities";
+  return `${mealsCount} ${mealLabel} • ${activitiesCount} ${activityLabel}`;
+}
+
+/**
+ * Return whether one product matches the current search term.
+ *
+ * Parameters:
+ *   product: Food product being considered.
+ *   searchTerm: Lowercased search term entered by the user.
+ *
+ * Returns:
+ *   boolean: `true` when the product name contains the search term.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function matchesProductSearch(
+  product: FoodProduct,
+  searchTerm: string,
+): boolean {
+  if (!searchTerm) {
+    return true;
+  }
+
+  return product.name.toLowerCase().includes(searchTerm);
+}
+
+/**
+ * Return a sorted copy of the product catalog.
+ *
+ * Parameters:
+ *   products: Product rows to sort.
+ *   sortKey: Product field used for sorting.
+ *   sortDirection: Whether the sort should be ascending or descending.
+ *
+ * Returns:
+ *   FoodProduct[]: Sorted product rows.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function sortProducts(
+  products: FoodProduct[],
+  sortKey: ProductsSortKey,
+  sortDirection: SortDirection,
+): FoodProduct[] {
+  return [...products].sort((leftProduct, rightProduct) => {
+    if (sortKey === "name") {
+      const comparison = leftProduct.name.localeCompare(rightProduct.name);
+      return sortDirection === "asc" ? comparison : comparison * -1;
+    }
+
+    const leftValue = getProductSortValue(leftProduct, sortKey);
+    const rightValue = getProductSortValue(rightProduct, sortKey);
+
+    if (leftValue === null && rightValue === null) {
+      return 0;
+    }
+
+    if (leftValue === null) {
+      return 1;
+    }
+
+    if (rightValue === null) {
+      return -1;
+    }
+
+    return sortDirection === "asc"
+      ? leftValue - rightValue
+      : rightValue - leftValue;
+  });
+}
+
+/**
+ * Read the numeric sort value for one product field.
+ *
+ * Parameters:
+ *   product: Product row being sorted.
+ *   sortKey: Numeric field requested by the products table.
+ *
+ * Returns:
+ *   number | null: Numeric sort value, or `null` when not set.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function getProductSortValue(
+  product: FoodProduct,
+  sortKey: Exclude<ProductsSortKey, "name">,
+): number | null {
+  return product[sortKey];
+}
+
+/**
  * Return the display configuration for one trend metric.
  *
  * Parameters:
@@ -1505,16 +1962,54 @@ function getTrendMetricMeta(metric: TrendMetric) {
       label: "Exercise calories",
       subtitle: "Daily logged exercise burn",
       color: "#60A5FA",
+      targetColor: "#CBD5E1",
+      valueLabel: "Achieved",
+      targetLabel: null,
       pickValue: (day: HistoryDay) => day.actual_exercise_calories,
+      pickTarget: () => null,
+      formatValue: (value: number) => formatCalories(value),
     };
   }
 
   if (metric === "protein") {
     return {
       label: "Protein intake",
-      subtitle: "Daily protein intake in grams",
+      subtitle: "Daily protein intake against the stored target",
       color: "#2563EB",
+      targetColor: "#CBD5E1",
+      valueLabel: "Achieved",
+      targetLabel: "Target",
       pickValue: (day: HistoryDay) => day.actual_protein_g,
+      pickTarget: (day: HistoryDay) => day.target_protein_g,
+      formatValue: (value: number) => `${Math.round(value)} g`,
+    };
+  }
+
+  if (metric === "carbs") {
+    return {
+      label: "Carbs intake",
+      subtitle: "Daily carbohydrate intake against the stored target",
+      color: "#D97706",
+      targetColor: "#CBD5E1",
+      valueLabel: "Achieved",
+      targetLabel: "Target",
+      pickValue: (day: HistoryDay) => day.actual_carbs_g,
+      pickTarget: (day: HistoryDay) => day.target_carbs_g,
+      formatValue: (value: number) => `${Math.round(value)} g`,
+    };
+  }
+
+  if (metric === "fat") {
+    return {
+      label: "Fat intake",
+      subtitle: "Daily fat intake against the stored target",
+      color: "#EF4444",
+      targetColor: "#CBD5E1",
+      valueLabel: "Achieved",
+      targetLabel: "Target",
+      pickValue: (day: HistoryDay) => day.actual_fat_g,
+      pickTarget: (day: HistoryDay) => day.target_fat_g,
+      formatValue: (value: number) => `${Math.round(value)} g`,
     };
   }
 
@@ -1523,14 +2018,24 @@ function getTrendMetricMeta(metric: TrendMetric) {
       label: "Training load",
       subtitle: "Daily suffer score from logged activities",
       color: "#FB7185",
+      targetColor: "#CBD5E1",
+      valueLabel: "Achieved",
+      targetLabel: null,
       pickValue: (day: HistoryDay) => day.total_suffer_score,
+      pickTarget: () => null,
+      formatValue: (value: number) => Math.round(value).toLocaleString(),
     };
   }
 
   return {
     label: "Food calories",
-    subtitle: "Daily logged food intake",
-    color: "#16A34A",
+    subtitle: "Daily food intake against the stored target",
+    color: "#2DD4BF",
+    targetColor: "#CBD5E1",
+    valueLabel: "Achieved",
+    targetLabel: "Target",
     pickValue: (day: HistoryDay) => day.actual_food_calories,
+    pickTarget: (day: HistoryDay) => day.target_food_calories,
+    formatValue: (value: number) => formatCalories(value),
   };
 }

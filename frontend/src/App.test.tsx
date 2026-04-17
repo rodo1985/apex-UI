@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -6,6 +6,15 @@ import App from "./App";
 
 const productsPayload = {
   items: [
+    {
+      id: 2,
+      name: "Almond butter",
+      default_serving_g: 20,
+      calories_per_100g: 614,
+      carbs_g_per_100g: 19,
+      protein_g_per_100g: 21,
+      fat_g_per_100g: 56,
+    },
     {
       id: 1,
       name: "Rolled oats",
@@ -31,6 +40,27 @@ const productsPayload = {
  *   This helper does not raise errors directly.
  */
 function buildBootstrapPayload(targetDate = "2026-04-16") {
+  const daySummary = {
+    date: targetDate,
+    target_food_calories: 2490,
+    target_protein_g: 150,
+    target_carbs_g: 290,
+    target_fat_g: 68,
+    actual_food_calories: 725,
+    actual_exercise_calories: 976,
+    net_calories: -251,
+    actual_protein_g: 42,
+    actual_carbs_g: 115,
+    actual_fat_g: 12,
+    meals_count: 1,
+    meal_items_count: 1,
+    activities_count: 1,
+    total_distance_meters: 13020,
+    total_moving_time_seconds: 3933,
+    total_elevation_gain_meters: 127,
+    total_suffer_score: 212,
+  };
+
   return {
     generated_at: "2026-04-16T12:00:00+00:00",
     access_protected: false,
@@ -111,18 +141,40 @@ function buildBootstrapPayload(targetDate = "2026-04-16") {
     history: {
       date_from: "2026-03-20",
       date_to: targetDate,
-      days: [],
+      days: [daySummary],
     },
     trends: {
       date_from: "2026-01-24",
       date_to: targetDate,
-      days: [],
+      days: [
+        {
+          ...daySummary,
+          date: "2026-04-14",
+          actual_food_calories: 640,
+          actual_exercise_calories: 812,
+          actual_protein_g: 104,
+          actual_carbs_g: 201,
+          actual_fat_g: 51,
+          total_suffer_score: 180,
+        },
+        {
+          ...daySummary,
+          date: "2026-04-15",
+          actual_food_calories: 701,
+          actual_exercise_calories: 930,
+          actual_protein_g: 132,
+          actual_carbs_g: 248,
+          actual_fat_g: 59,
+          total_suffer_score: 236,
+        },
+        daySummary,
+      ],
       summary: {
-        logged_days: 1,
-        average_food_calories: 725,
-        average_exercise_calories: 976,
-        total_distance_meters: 13020,
-        total_activities: 1,
+        logged_days: 3,
+        average_food_calories: 689,
+        average_exercise_calories: 906,
+        total_distance_meters: 39060,
+        total_activities: 3,
       },
     },
   };
@@ -210,6 +262,18 @@ describe("App", () => {
       expect(screen.getByRole("button", { name: "Profile" })).toBeInTheDocument(),
     );
 
+    const navigation = screen.getByRole("navigation", { name: "Portal sections" });
+    const navLabels = within(navigation)
+      .getAllByRole("button")
+      .map((button) => button.textContent?.trim());
+
+    expect(navLabels).toEqual([
+      "Today",
+      "Trends",
+      "Food products",
+      "History",
+      "Profile",
+    ]);
     expect(
       screen.getByRole("button", { name: "Food products" }),
     ).toBeInTheDocument();
@@ -230,7 +294,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Profile" }));
     expect(screen.getByText("Profile overview")).toBeInTheDocument();
-    expect(screen.getByText("athlete-1")).toBeInTheDocument();
+    expect(screen.queryByText("athlete-1")).not.toBeInTheDocument();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
@@ -241,6 +305,29 @@ describe("App", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("toggles the desktop sidebar from the shell menu button", async () => {
+    mockPortalFetch();
+    const user = userEvent.setup();
+
+    const { container } = render(<App />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Collapse navigation menu" }),
+      ).toBeInTheDocument(),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Collapse navigation menu" }),
+    );
+    expect(container.querySelector(".portal-shell")).toHaveClass(
+      "sidebar-collapsed",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Expand navigation menu" }));
+    expect(container.querySelector(".portal-shell")).toHaveClass("sidebar-open");
   });
 
   test("steps back one day from the date arrows", async () => {
@@ -276,6 +363,7 @@ describe("App", () => {
     const mealCard = mealHeading.closest("details");
 
     expect(mealCard).not.toHaveAttribute("open");
+    expect(mealCard?.querySelector(".meal-summary-copy p")).toBeNull();
 
     await user.click(mealHeading);
     expect(mealCard).toHaveAttribute("open");
@@ -283,6 +371,58 @@ describe("App", () => {
 
     await user.click(mealHeading);
     expect(mealCard).not.toHaveAttribute("open");
+  });
+
+  test("shows training load in the activity card", async () => {
+    mockPortalFetch();
+
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Training load")).toBeInTheDocument(),
+    );
+    expect(screen.getByText("212")).toBeInTheDocument();
+  });
+
+  test("filters and sorts food products with the toolbar controls", async () => {
+    mockPortalFetch();
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Food products" }));
+
+    const searchInput = await screen.findByPlaceholderText("Search by food or brand");
+    expect(screen.getByLabelText("Sort")).toBeInTheDocument();
+    expect(screen.getByLabelText("Direction")).toBeInTheDocument();
+
+    await user.type(searchInput, "oats");
+    expect(screen.getByRole("cell", { name: "Rolled oats" })).toBeInTheDocument();
+    expect(screen.queryByRole("cell", { name: "Almond butter" })).not.toBeInTheDocument();
+
+    await user.clear(searchInput);
+    await user.selectOptions(screen.getByLabelText("Sort"), "calories_per_100g");
+    await user.selectOptions(screen.getByLabelText("Direction"), "desc");
+
+    const dataRows = screen.getAllByRole("row").slice(1);
+    expect(within(dataRows[0]).getByRole("cell", { name: "Almond butter" })).toBeInTheDocument();
+  });
+
+  test("renders history nutrition chips and trend metric toggles", async () => {
+    mockPortalFetch();
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "History" }));
+    await screen.findByText("725 / 2,490 kcal");
+    expect(screen.getByText("42 / 150 g")).toBeInTheDocument();
+    expect(screen.getByText("115 / 290 g")).toBeInTheDocument();
+    expect(screen.getByText("12 / 68 g")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Trends" }));
+    expect(screen.getByRole("button", { name: "Carbs intake" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Fat intake" })).toBeInTheDocument();
   });
 
   test("shows the unlock screen after a 401 response", async () => {

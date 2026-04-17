@@ -21,12 +21,13 @@ track how fuelling and training are evolving over time.
 - Shows a dedicated profile view with body metrics and stored APEX profile
   documents.
 - Shows a dedicated food product table for reusable foods already stored in the
-  MCP database.
-- Shows past tracked days with quick review metrics and counts.
+  MCP database, including client-side search and sorting controls.
+- Shows past tracked days with nutrition-first summary chips for food,
+  exercise, and macro adherence.
 - Shows evolution trends for food, exercise, macros, activity load, and
-  logging consistency.
-- Adds a mobile sidebar drawer with a hamburger toggle for easier navigation on
-  smaller screens.
+  target-versus-achieved overlays where target data exists.
+- Adds a collapsible desktop icon rail plus a mobile sidebar drawer for easier
+  navigation across screen sizes.
 - Reuses the APEX visual language: dark workspace, teal brand accent, and APEX
   logo/wordmark.
 - Deploys as one Vercel project with:
