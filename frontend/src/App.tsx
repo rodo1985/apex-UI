@@ -25,6 +25,7 @@ import {
 } from "./lib/format";
 
 const TOKEN_STORAGE_KEY = "apex.portal.accessToken";
+const DEFAULT_ACCESS_TOKEN = import.meta.env.VITE_PORTAL_ACCESS_TOKEN ?? null;
 const HISTORY_WINDOW_OPTIONS = [14, 28, 56, 84];
 const TREND_WINDOW_OPTIONS = [28, 56, 84, 168];
 
@@ -68,8 +69,8 @@ export default function App() {
   );
   const [accessToken, setAccessToken] = useState<string | null>(() =>
     typeof window === "undefined"
-      ? null
-      : window.sessionStorage.getItem(TOKEN_STORAGE_KEY),
+      ? DEFAULT_ACCESS_TOKEN
+      : window.sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? DEFAULT_ACCESS_TOKEN,
   );
   const [portalData, setPortalData] = useState<BootstrapResponse | null>(null);
   const [status, setStatus] = useState<ViewStatus>("loading");
@@ -628,7 +629,7 @@ function TodayView({
   onStepDate: (direction: -1 | 1) => void;
 }) {
   const summary = snapshot.summary;
-  const [openMealIds, setOpenMealIds] = useState<number[]>([]);
+  const [openMealIds, setOpenMealIds] = useState<string[]>([]);
   const nextDayDisabled = selectedDate >= todayDate;
 
   return (
@@ -1716,12 +1717,12 @@ function WindowSelector({
  *   mealId: Meal identifier to toggle.
  *
  * Returns:
- *   number[]: Updated open meal identifiers.
+ *   string[]: Updated open meal identifiers.
  *
  * Raises:
  *   This helper does not raise errors directly.
  */
-function toggleMeal(current: number[], mealId: number): number[] {
+function toggleMeal(current: string[], mealId: string): string[] {
   if (current.includes(mealId)) {
     return current.filter((currentId) => currentId !== mealId);
   }

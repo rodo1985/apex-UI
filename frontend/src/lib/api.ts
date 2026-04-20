@@ -14,7 +14,7 @@ export interface PortalProfile {
 }
 
 export interface FoodProduct {
-  id: number;
+  id: string;
   name: string;
   default_serving_g: number | null;
   calories_per_100g: number;
@@ -50,8 +50,8 @@ export interface DailySummary {
 }
 
 export interface MealItem {
-  id: number;
-  product_id: number | null;
+  id: string;
+  product_id: string | null;
   ingredient_name: string;
   grams: number;
   calories: number;
@@ -61,7 +61,7 @@ export interface MealItem {
 }
 
 export interface Meal {
-  id: number;
+  id: string;
   meal_label: string;
   notes_markdown: string;
   items: MealItem[];
@@ -72,7 +72,7 @@ export interface Meal {
 }
 
 export interface Activity {
-  id: number;
+  id: string;
   title: string;
   activity_date: string;
   sport_type: string | null;

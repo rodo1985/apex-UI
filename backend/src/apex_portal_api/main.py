@@ -47,6 +47,8 @@ def create_app(
     resolved_store = store or PostgresPortalStore(
         database_url=resolved_settings.database_url,
         athlete_name_override=resolved_settings.portal_athlete_name,
+        portal_user_id=resolved_settings.portal_user_id,
+        portal_timezone=resolved_settings.portal_timezone,
     )
 
     @asynccontextmanager

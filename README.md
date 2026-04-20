@@ -34,8 +34,12 @@ track how fuelling and training are evolving over time.
   - `frontend/` at `/`
   - `backend/` at `/api`
 - Reads directly from the MCP wellness tables:
-  `user_profiles`, `food_products`, `daily_targets`, `daily_meals`,
-  `meal_items`, and `activity_entries`.
+  `public.user_profiles` plus one of two supported wellness schemas:
+  legacy tables (`public.food_products`, `public.daily_targets`,
+  `public.daily_meals`, `public.meal_items`, `public.activity_entries`) or the
+  newer normalized tables (`public.food_items`,
+  `public.daily_nutrition_targets`, `public.meal_logs`,
+  `public.meal_ingredients`, `public.activities`).
 
 ### Out Of Scope
 
@@ -119,11 +123,19 @@ Required:
 - `APEX_PORTAL_SUBJECT`
   The MCP/Supabase subject whose progress should be shown in the portal.
 
+The backend detects the connected Supabase schema automatically, so local
+development can point either at the current production database or at the
+newer normalized wellness schema used by related projects.
+
 Recommended:
 
 - `APEX_PORTAL_ACCESS_TOKEN`
   Optional simple access token required by the API and unlock screen. This is
   the recommended production privacy guard for the single-athlete portal.
+- `APEX_PORTAL_USER_ID`
+  Optional explicit Supabase app `user_id` for the wellness tables. Leave it
+  empty when the connected database contains only one athlete; set it when the
+  same Supabase project stores multiple athletes.
 - `APEX_ALLOWED_ORIGINS`
   Comma-separated local/dev origins for CORS.
 - `APEX_PORTAL_TIMEZONE`
@@ -138,6 +150,10 @@ to `frontend/.env.local`.
 
 - `VITE_API_BASE_URL`
   Optional API base override. Defaults to `/api`.
+- `VITE_PORTAL_ACCESS_TOKEN`
+  Optional local-development fallback token for the unlock screen. When set,
+  the frontend sends it automatically until the browser session stores a
+  different token.
 
 ## Project Structure
 
