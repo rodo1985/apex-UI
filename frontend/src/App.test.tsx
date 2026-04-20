@@ -7,7 +7,7 @@ import App from "./App";
 const productsPayload = {
   items: [
     {
-      id: 2,
+      id: "food-2",
       name: "Almond butter",
       default_serving_g: 20,
       calories_per_100g: 614,
@@ -16,7 +16,7 @@ const productsPayload = {
       fat_g_per_100g: 56,
     },
     {
-      id: 1,
+      id: "food-1",
       name: "Rolled oats",
       default_serving_g: 40,
       calories_per_100g: 384,
@@ -99,13 +99,13 @@ function buildBootstrapPayload(targetDate = "2026-04-16") {
       },
       meals: [
         {
-          id: 1,
+          id: "meal-1",
           meal_label: "Pre-training breakfast",
           notes_markdown: "Easy fuel before the run.",
           items: [
             {
-              id: 1,
-              product_id: 1,
+              id: "meal-item-1",
+              product_id: "food-1",
               ingredient_name: "Oats (rolled)",
               grams: 30,
               calories: 115.2,
@@ -122,7 +122,7 @@ function buildBootstrapPayload(targetDate = "2026-04-16") {
       ],
       activities: [
         {
-          id: 1,
+          id: "activity-1",
           title: "Around gran via",
           activity_date: targetDate,
           sport_type: "Run",
@@ -223,6 +223,32 @@ function mockPortalFetch() {
 }
 
 /**
+ * Read the authorization header used by the first mocked fetch call.
+ *
+ * Parameters:
+ *   fetchMock: Mocked global fetch function.
+ *
+ * Returns:
+ *   string | null: Bearer authorization header when present.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function getAuthorizationHeader(fetchMock: ReturnType<typeof vi.fn>): string | null {
+  const init = fetchMock.mock.calls[0]?.[1];
+  if (!init || typeof init !== "object") {
+    return null;
+  }
+
+  const headers = Reflect.get(init, "headers");
+  if (!headers || typeof headers !== "object") {
+    return null;
+  }
+
+  return Reflect.get(headers, "Authorization") as string | null;
+}
+
+/**
  * Mock a 401 bootstrap response for unlock-screen testing.
  *
  * Parameters:
@@ -251,6 +277,20 @@ describe("App", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     window.sessionStorage.clear();
+  });
+
+  test("uses the configured dev token when session storage is empty", async () => {
+    const fetchMock = mockPortalFetch();
+
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Profile" })).toBeInTheDocument(),
+    );
+
+    expect(getAuthorizationHeader(fetchMock)).toBe(
+      `Bearer ${import.meta.env.VITE_PORTAL_ACCESS_TOKEN}`,
+    );
   });
 
   test("renders the updated portal shell and new nav items", async () => {
@@ -367,6 +407,7 @@ describe("App", () => {
 
     await user.click(mealHeading);
     expect(mealCard).toHaveAttribute("open");
+    expect(screen.getByText("Ingredient breakdown")).toBeInTheDocument();
     expect(screen.getByText("Oats (rolled)")).toBeInTheDocument();
 
     await user.click(mealHeading);
@@ -395,6 +436,18 @@ describe("App", () => {
     const searchInput = await screen.findByPlaceholderText("Search by food or brand");
     expect(screen.getByLabelText("Sort")).toBeInTheDocument();
     expect(screen.getByLabelText("Direction")).toBeInTheDocument();
+    const columnHeaders = screen
+      .getAllByRole("columnheader")
+      .map((header) => header.textContent?.replace(/\s+/g, " ").trim());
+
+    expect(columnHeaders).toEqual([
+      "Name",
+      "Default serving",
+      "Calories/100g",
+      "Carbs/100g",
+      "Protein/100g",
+      "Fat/100g",
+    ]);
 
     await user.type(searchInput, "oats");
     expect(screen.getByRole("cell", { name: "Rolled oats" })).toBeInTheDocument();

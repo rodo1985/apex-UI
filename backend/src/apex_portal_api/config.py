@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         database_url: Postgres connection string for the Supabase-backed schema.
         portal_subject: Subject whose data should be shown in the portal.
         portal_access_token: Optional bearer token required by the read API.
+        portal_user_id: Optional explicit Supabase app user id for portal data.
         allowed_origins_raw: Comma-separated list of local/dev browser origins.
         portal_timezone: IANA timezone used to resolve the default business day.
         portal_athlete_name: Optional display-name override for the frontend.
@@ -45,6 +46,10 @@ class Settings(BaseSettings):
     portal_access_token: str | None = Field(
         default=None,
         validation_alias="APEX_PORTAL_ACCESS_TOKEN",
+    )
+    portal_user_id: str | None = Field(
+        default=None,
+        validation_alias="APEX_PORTAL_USER_ID",
     )
     allowed_origins_raw: str = Field(
         default="http://127.0.0.1:5173,http://localhost:5173",

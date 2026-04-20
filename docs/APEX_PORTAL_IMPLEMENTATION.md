@@ -82,23 +82,33 @@ flowchart LR
 
 The backend reads from these existing tables:
 
-- `user_profiles`
-- `food_products`
-- `daily_targets`
-- `daily_meals`
-- `meal_items`
-- `activity_entries`
+- `public.user_profiles`
+- Either the legacy review schema:
+  `public.food_products`, `public.daily_targets`, `public.daily_meals`,
+  `public.meal_items`, `public.activity_entries`
+- Or the newer normalized schema:
+  `public.food_items`, `public.daily_nutrition_targets`,
+  `public.meal_logs`, `public.meal_ingredients`, `public.activities`
 
 The portal does not write to those tables. It only aggregates and presents the
 data already stored by the MCP workflows.
 
 ## Important Design Decisions
 
-### Single-athlete subject binding
+### Automatic schema detection
 
-The portal reads one configured `APEX_PORTAL_SUBJECT`, exactly like the MCP
-storage layer does. That keeps the portal aligned with the same caller-scoped
-data model instead of introducing a second identity mapping layer.
+The portal still reads one configured `APEX_PORTAL_SUBJECT`, because that is
+what the upstream MCP layer uses for profile data and for the legacy wellness
+tables. When the connected database uses the newer normalized schema, the
+backend resolves the matching app-level `user_id` before it runs the daily
+summary queries.
+
+This keeps local development flexible:
+
+- the current production deployment can keep using the legacy subject-based
+  wellness tables
+- newer Supabase projects can use the normalized `user_id`-based tables
+- the same backend code detects the available schema at runtime
 
 ### Latest tracked day default
 
@@ -112,6 +122,10 @@ screen on rest days or before the first log of the day.
 An optional `APEX_PORTAL_ACCESS_TOKEN` lets the deployed site stay private
 without introducing a larger auth workflow. If the token is configured, the
 frontend shows a minimal unlock screen and the backend expects a bearer token.
+
+For local development, the Vite app can also read `VITE_PORTAL_ACCESS_TOKEN`
+from `frontend/.env.local`. That keeps the browser requests authenticated
+without manually unlocking the portal after every fresh session or restart.
 
 ### Read-only API surface
 

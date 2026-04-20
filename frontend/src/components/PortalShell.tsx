@@ -159,9 +159,14 @@ export function PortalShell({
             aria-expanded={sidebarVisible}
             onClick={onToggleSidebar}
           >
-            <span />
-            <span />
-            <span />
+            <span className="portal-menu-icon" aria-hidden="true">
+              <span className="portal-menu-icon-rail" />
+              <span className="portal-menu-icon-stack">
+                <span className="portal-menu-icon-line" />
+                <span className="portal-menu-icon-line" />
+                <span className="portal-menu-icon-line" />
+              </span>
+            </span>
           </button>
 
           <div className="portal-top-bar-copy">

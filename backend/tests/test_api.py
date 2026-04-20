@@ -84,12 +84,12 @@ class FakePortalStore(PortalStore):
             ),
             meals=[
                 Meal(
-                    id=1,
+                    id="meal-1",
                     meal_label="Pre-training breakfast",
                     items=[
                         MealItem(
-                            id=1,
-                            product_id=1,
+                            id="meal-item-1",
+                            product_id="food-1",
                             ingredient_name="Oats (rolled)",
                             grams=30,
                             calories=115.2,
@@ -106,7 +106,7 @@ class FakePortalStore(PortalStore):
             ],
             activities=[
                 Activity(
-                    id=1,
+                    id="activity-1",
                     title="Around gran via",
                     activity_date=target_date,
                     sport_type="Run",
@@ -128,7 +128,7 @@ class FakePortalStore(PortalStore):
 
         return [
             FoodProduct(
-                id=1,
+                id="food-1",
                 name="Rolled oats",
                 default_serving_g=40,
                 calories_per_100g=384,
