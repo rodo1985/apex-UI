@@ -407,6 +407,7 @@ describe("App", () => {
 
     await user.click(mealHeading);
     expect(mealCard).toHaveAttribute("open");
+    expect(screen.getByText("Ingredient breakdown")).toBeInTheDocument();
     expect(screen.getByText("Oats (rolled)")).toBeInTheDocument();
 
     await user.click(mealHeading);
@@ -435,6 +436,18 @@ describe("App", () => {
     const searchInput = await screen.findByPlaceholderText("Search by food or brand");
     expect(screen.getByLabelText("Sort")).toBeInTheDocument();
     expect(screen.getByLabelText("Direction")).toBeInTheDocument();
+    const columnHeaders = screen
+      .getAllByRole("columnheader")
+      .map((header) => header.textContent?.replace(/\s+/g, " ").trim());
+
+    expect(columnHeaders).toEqual([
+      "Name",
+      "Default serving",
+      "Calories/100g",
+      "Carbs/100g",
+      "Protein/100g",
+      "Fat/100g",
+    ]);
 
     await user.type(searchInput, "oats");
     expect(screen.getByRole("cell", { name: "Rolled oats" })).toBeInTheDocument();

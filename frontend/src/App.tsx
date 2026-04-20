@@ -921,12 +921,24 @@ function FoodProductsView({
                 <table className="products-table">
                   <thead>
                     <tr>
-                      <th>Name</th>
-                      <th>Default serving</th>
-                      <th>Calories / 100g</th>
-                      <th>Carbs</th>
-                      <th>Protein</th>
-                      <th>Fat</th>
+                      <th>
+                        <ProductsTableHeading label="Name" />
+                      </th>
+                      <th>
+                        <ProductsTableHeading label="Default serving" />
+                      </th>
+                      <th>
+                        <ProductsTableHeading label="Calories" unit="/100g" />
+                      </th>
+                      <th>
+                        <ProductsTableHeading label="Carbs" unit="/100g" />
+                      </th>
+                      <th>
+                        <ProductsTableHeading label="Protein" unit="/100g" />
+                      </th>
+                      <th>
+                        <ProductsTableHeading label="Fat" unit="/100g" />
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1228,11 +1240,13 @@ function DateNavigator({
           ←
         </button>
 
-        <input
-          type="date"
-          value={selectedDate}
-          onChange={(event) => onSelectDate(event.target.value)}
-        />
+        <div className="date-input-shell">
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(event) => onSelectDate(event.target.value)}
+          />
+        </div>
 
         <button
           type="button"
@@ -1318,6 +1332,12 @@ function MealAccordionCard({
       ) : null}
 
       <div className="meal-items">
+        <div className="meal-items-header">
+          <span>Ingredient breakdown</span>
+          <span>
+            {meal.items.length} {meal.items.length === 1 ? "ingredient" : "ingredients"}
+          </span>
+        </div>
         {meal.items.map((item) => (
           <MealItemRow key={item.id} item={item} />
         ))}
@@ -1418,27 +1438,28 @@ function MealItemRow({
   return (
     <div className="meal-item-row">
       <div className="meal-item-copy">
+        <p className="meal-item-kicker">Ingredient</p>
         <strong>{item.ingredient_name}</strong>
         <span>{Math.round(item.grams)} g</span>
       </div>
 
       <div className="meal-item-metrics">
-        <NutrientBadge
+        <IngredientMetricPill
           tone="calories"
           label="Calories"
           value={formatCompactAmount(item.calories, "kcal")}
         />
-        <NutrientBadge
+        <IngredientMetricPill
           tone="protein"
           label="Protein"
           value={formatCompactAmount(item.protein_g, "g")}
         />
-        <NutrientBadge
+        <IngredientMetricPill
           tone="carbs"
           label="Carbs"
           value={formatCompactAmount(item.carbs_g, "g")}
         />
-        <NutrientBadge
+        <IngredientMetricPill
           tone="fat"
           label="Fat"
           value={formatCompactAmount(item.fat_g, "g")}
@@ -1473,6 +1494,37 @@ function NutrientBadge({
 }) {
   return (
     <span className={`nutrient-badge ${tone}`}>
+      <em>{label}</em>
+      <strong>{value}</strong>
+    </span>
+  );
+}
+
+/**
+ * Render a nested ingredient metric pill with a different visual language.
+ *
+ * Parameters:
+ *   tone: Color treatment used by the pill.
+ *   label: Visible label for the nutrient.
+ *   value: Visible formatted nutrient value.
+ *
+ * Returns:
+ *   JSX.Element: Compact ingredient detail pill.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function IngredientMetricPill({
+  tone,
+  label,
+  value,
+}: {
+  tone: "calories" | "protein" | "carbs" | "fat";
+  label: string;
+  value: string;
+}) {
+  return (
+    <span className={`ingredient-metric-pill ${tone}`}>
       <em>{label}</em>
       <strong>{value}</strong>
     </span>
@@ -1593,6 +1645,39 @@ function MetricCard({
 }
 
 /**
+ * Render a table heading with a styled optional unit line.
+ *
+ * Parameters:
+ *   label: Main label shown in the table header.
+ *   unit: Optional supporting unit copy.
+ *
+ * Returns:
+ *   JSX.Element: Structured table heading label.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function ProductsTableHeading({
+  label,
+  unit,
+}: {
+  label: string;
+  unit?: string;
+}) {
+  return (
+    <span
+      className="products-table-heading"
+      aria-label={unit ? `${label} ${unit}` : label}
+    >
+      <span className="products-table-heading-label">{label}</span>
+      {unit ? (
+        <span className="products-table-heading-unit">{unit}</span>
+      ) : null}
+    </span>
+  );
+}
+
+/**
  * Render one progress block for a target-based metric.
  *
  * Parameters:
@@ -1630,7 +1715,7 @@ function ProgressPanel({
     <article className={`progress-panel tone-${tone}${overflow > 0 ? " over-target" : ""}`}>
       <div className="panel-header">
         <h3>{title}</h3>
-        <span>
+        <span className={`progress-target tone-${tone}`}>
           {target ? `Target ${Math.round(target)} ${unit}` : "No target"}
         </span>
       </div>
