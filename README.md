@@ -63,10 +63,10 @@ track how fuelling and training are evolving over time.
 cd backend
 uv venv
 uv sync
-cp .env.example .env.local
+cp .env.example .env
 ```
 
-The backend reads environment variables from `backend/.env.local` by default.
+The backend reads environment variables from `backend/.env`.
 
 ### Frontend setup
 
@@ -111,8 +111,7 @@ make build
 
 ### Backend environment variables
 
-Copy [backend/.env.example](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/backend/.env.example)
-to `backend/.env.local`.
+Copy [backend/.env.example](backend/.env.example) to `backend/.env`.
 
 Required:
 

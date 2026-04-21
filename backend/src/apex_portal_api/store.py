@@ -1205,7 +1205,7 @@ class PostgresPortalStore(PortalStore):
             raise RuntimeError(
                 "Unable to resolve a unique Supabase user id for "
                 f"subject '{subject}'. Set APEX_PORTAL_USER_ID in "
-                "backend/.env.local to choose the correct athlete."
+                "backend/.env to choose the correct athlete."
             )
 
     async def _get_schema_variant(self) -> str:
