@@ -1,9 +1,10 @@
 # APEX Progress Portal
 
-APEX Progress Portal is a small read-only web app for reviewing endurance
-training and nutrition progress online. It combines a React frontend with a
-FastAPI backend that reads the same Supabase/Postgres data already used by the
-`apex-mcp-server` project.
+APEX Progress Portal is a small web app for reviewing endurance training and
+nutrition progress online. It combines a React frontend with a FastAPI backend
+that reads the same Supabase/Postgres data already used by the
+`apex-mcp-server` project and now includes a lightweight Strava pull job for
+keeping `public.activities` fresh.
 
 The goal is to keep the experience simple: open the portal, review the latest
 tracked day, inspect profile context and reusable foods, review past logs, and
@@ -30,6 +31,8 @@ track how fuelling and training are evolving over time.
   navigation across screen sizes.
 - Reuses the APEX visual language: dark workspace, teal brand accent, and APEX
   logo/wordmark.
+- Adds a lightweight Strava sync script that refreshes recent activities and
+  upserts them into `public.activities`.
 - Deploys as one Vercel project with:
   - `frontend/` at `/`
   - `backend/` at `/api`
@@ -43,7 +46,7 @@ track how fuelling and training are evolving over time.
 
 ### Out Of Scope
 
-- Writing or editing meals, targets, or activities
+- Manual UI flows for connecting Strava or editing activities
 - Multi-user account management
 - Full MCP/OAuth login inside the portal
 - Rebuilding the original APEX coaching workspace
@@ -63,10 +66,11 @@ track how fuelling and training are evolving over time.
 cd backend
 uv venv
 uv sync
-cp .env.example .env.local
+cp .env.template .env.local
 ```
 
-The backend reads environment variables from `backend/.env.local` by default.
+The backend reads environment variables from `backend/.env` first and then lets
+`backend/.env.local` override any local-only values.
 
 ### Frontend setup
 
@@ -87,6 +91,15 @@ uv run uvicorn apex_portal_api.main:app --reload
 
 The local API is available at `http://127.0.0.1:8000`.
 
+### Run one manual Strava sync
+
+```bash
+cd backend
+uv run python -m apex_portal_api.strava_sync
+```
+
+You can also use `make sync-strava` from the repo root.
+
 ### Run the frontend
 
 ```bash
@@ -102,6 +115,7 @@ development, Vite proxies `/api/*` requests to the FastAPI server.
 ```bash
 make help
 make dev
+make sync-strava
 make test
 make lint
 make build
@@ -111,8 +125,8 @@ make build
 
 ### Backend environment variables
 
-Copy [backend/.env.example](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/backend/.env.example)
-to `backend/.env.local`.
+Copy [backend/.env.template](backend/.env.template) to `backend/.env.local`.
+If you prefer, you can also keep shared local values in `backend/.env`.
 
 Required:
 
@@ -122,6 +136,10 @@ Required:
   `postgresql://apex:apex@127.0.0.1:54329/apex_mcp_server`.
 - `APEX_PORTAL_SUBJECT`
   The MCP/Supabase subject whose progress should be shown in the portal.
+- `STRAVA_CLIENT_ID`
+  Strava application client id for the sync job.
+- `STRAVA_CLIENT_SECRET`
+  Strava application client secret for the sync job.
 
 The backend detects the connected Supabase schema automatically, so local
 development can point either at the current production database or at the
@@ -142,6 +160,14 @@ Recommended:
   Used to resolve the default “today” date on the backend.
 - `APEX_PORTAL_ATHLETE_NAME`
   Optional display-name override for the profile and sidebar.
+- `STRAVA_REFRESH_TOKEN`
+  Required for the first successful sync run. The backend stores the rotated
+  refresh token in Postgres after bootstrap, but keeping the latest value in
+  your local env remains a safe fallback.
+- `STRAVA_SYNC_LOOKBACK_HOURS`
+  Trailing Strava window fetched on each run. Default: `72`.
+- `STRAVA_REQUEST_TIMEOUT_SECONDS`
+  Timeout for outbound Strava API requests. Default: `30`.
 
 ### Frontend environment variables
 
@@ -163,6 +189,8 @@ to `frontend/.env.local`.
   Vite React portal, APEX-inspired UI, and frontend tests.
 - [docs/APEX_PORTAL_IMPLEMENTATION.md](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/docs/APEX_PORTAL_IMPLEMENTATION.md)
   Human-readable implementation guide for the portal architecture and workflow.
+- [docs/STRAVA_SYNC_IMPLEMENTATION.md](docs/STRAVA_SYNC_IMPLEMENTATION.md)
+  Human-readable guide for the lightweight Strava ingestion workflow.
 - [vercel.json](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/vercel.json)
   Root Vercel Services configuration for the frontend and backend.
 - [Makefile](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/Makefile)
@@ -189,17 +217,33 @@ npx vercel link
 npx vercel env add DATABASE_URL
 npx vercel env add APEX_PORTAL_SUBJECT
 npx vercel env add APEX_PORTAL_ACCESS_TOKEN
+npx vercel env add APEX_PORTAL_USER_ID
+npx vercel env add STRAVA_CLIENT_ID
+npx vercel env add STRAVA_CLIENT_SECRET
+npx vercel env add STRAVA_REFRESH_TOKEN
 npx vercel --prod
 ```
 
 If your Vercel project is already linked, `npx vercel --prod` from the repo
 root is enough.
 
+To schedule the Strava sync, use any ordinary system scheduler that can run a
+Python command, for example a Linux cron entry on your server:
+
+```cron
+*/16 * * * * cd /path/to/apex-UI/backend && /usr/bin/env uv run python -m apex_portal_api.strava_sync >> /var/log/apex-strava-sync.log 2>&1
+```
+
+That keeps scheduling independent from Vercel while the portal itself remains
+deployed on Vercel.
+
 ## Contributing / Development Notes
 
-- Keep the backend read-only unless a current product need requires writes.
+- Keep the backend simple: the only intentional write path here is the Strava
+  activity sync into `public.activities`.
 - Keep the portal queries aligned with the `apex-mcp-server` tables and daily
   summary semantics.
 - Update this README and
   [docs/APEX_PORTAL_IMPLEMENTATION.md](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/docs/APEX_PORTAL_IMPLEMENTATION.md)
+  plus [docs/STRAVA_SYNC_IMPLEMENTATION.md](docs/STRAVA_SYNC_IMPLEMENTATION.md)
   whenever setup, API behavior, or deployment changes.

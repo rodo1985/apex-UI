@@ -251,9 +251,7 @@ def create_app(
         """
 
         return FoodProductsResponse(
-            items=await store_dependency.list_products(
-                resolved_settings.portal_subject
-            )
+            items=await store_dependency.list_products(resolved_settings.portal_subject)
         )
 
     @app.get("/portal/history", response_model=HistoryResponse)

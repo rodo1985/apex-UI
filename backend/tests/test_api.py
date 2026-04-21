@@ -221,7 +221,9 @@ class FakePortalStore(PortalStore):
         return None
 
 
-def build_test_client(portal_access_token: str | None = None) -> TestClient:
+def build_test_client(
+    portal_access_token: str | None = None,
+) -> TestClient:
     """Create a configured FastAPI test client.
 
     Parameters:

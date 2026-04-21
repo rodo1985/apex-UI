@@ -17,6 +17,11 @@ class Settings(BaseSettings):
         allowed_origins_raw: Comma-separated list of local/dev browser origins.
         portal_timezone: IANA timezone used to resolve the default business day.
         portal_athlete_name: Optional display-name override for the frontend.
+        strava_client_id: Strava application client identifier.
+        strava_client_secret: Strava application client secret.
+        strava_refresh_token: One-time bootstrap refresh token for the athlete.
+        strava_sync_lookback_hours: Trailing window pulled from Strava on each run.
+        strava_request_timeout_seconds: Timeout for outbound Strava API requests.
 
     Returns:
         Settings: Validated backend runtime configuration.
@@ -34,7 +39,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env.local",
+        env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -62,6 +67,23 @@ class Settings(BaseSettings):
     portal_athlete_name: str | None = Field(
         default=None,
         validation_alias="APEX_PORTAL_ATHLETE_NAME",
+    )
+    strava_client_id: str = Field(default="", validation_alias="STRAVA_CLIENT_ID")
+    strava_client_secret: str = Field(
+        default="",
+        validation_alias="STRAVA_CLIENT_SECRET",
+    )
+    strava_refresh_token: str = Field(
+        default="",
+        validation_alias="STRAVA_REFRESH_TOKEN",
+    )
+    strava_sync_lookback_hours: int = Field(
+        default=72,
+        validation_alias="STRAVA_SYNC_LOOKBACK_HOURS",
+    )
+    strava_request_timeout_seconds: int = Field(
+        default=30,
+        validation_alias="STRAVA_REQUEST_TIMEOUT_SECONDS",
     )
 
     @property
@@ -111,3 +133,39 @@ class Settings(BaseSettings):
         """
 
         return cls()
+
+    def require_strava_sync_credentials(self) -> None:
+        """Ensure the minimum Strava app credentials are configured.
+
+        Parameters:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            RuntimeError: Raised when the Strava client credentials are incomplete.
+
+        Example:
+            >>> Settings(
+            ...     DATABASE_URL="postgresql://example",
+            ...     APEX_PORTAL_SUBJECT="athlete-1",
+            ...     STRAVA_CLIENT_ID="123",
+            ...     STRAVA_CLIENT_SECRET="secret",
+            ... ).require_strava_sync_credentials()
+        """
+
+        missing_variables = [
+            name
+            for name, value in (
+                ("STRAVA_CLIENT_ID", self.strava_client_id),
+                ("STRAVA_CLIENT_SECRET", self.strava_client_secret),
+            )
+            if not value
+        ]
+        if missing_variables:
+            raise RuntimeError(
+                "Strava sync is not configured. Set "
+                + ", ".join(missing_variables)
+                + " in backend/.env, backend/.env.local, or the deployment environment."
+            )

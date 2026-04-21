@@ -31,13 +31,13 @@ source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pydantic-settings" },
     { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -46,13 +46,13 @@ dev = [
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.31.0,<0.32" },
     { name = "fastapi", specifier = ">=0.115.0,<0.116" },
+    { name = "httpx", specifier = ">=0.28.0,<0.29" },
     { name = "pydantic-settings", specifier = ">=2.10.0,<3" },
     { name = "uvicorn", specifier = ">=0.37.0,<0.38" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.28.0,<0.29" },
     { name = "pytest", specifier = ">=8.4.0,<9" },
     { name = "ruff", specifier = ">=0.14.0,<0.15" },
 ]

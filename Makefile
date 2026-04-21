@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 PYTHON_DIR := backend
 FRONTEND_DIR := frontend
 
-.PHONY: help dev dev-api dev-web test test-api test-web lint lint-api lint-web build build-web docker-note
+.PHONY: help dev dev-api dev-web sync-strava test test-api test-web lint lint-api lint-web build build-web docker-note
 
 help:
 	@printf "\033[1;36m\n🏁 APEX Progress Portal\n\033[0m"
@@ -12,6 +12,7 @@ help:
 	@printf "  \033[1mmake dev\033[0m           Start the frontend and backend in two terminals.\n"
 	@printf "  \033[1mmake dev-api\033[0m       Run the FastAPI backend with uvicorn reload.\n"
 	@printf "  \033[1mmake dev-web\033[0m       Run the Vite frontend.\n\n"
+	@printf "  \033[1mmake sync-strava\033[0m   Run one manual Strava activity sync into Supabase.\n\n"
 	@printf "\033[1;33m🧪 Test\n\033[0m"
 	@printf "  \033[1mmake test\033[0m          Run backend and frontend tests.\n"
 	@printf "  \033[1mmake test-api\033[0m      Run backend pytest suite.\n"
@@ -28,6 +29,7 @@ help:
 	@printf "\033[1;33m📝 Notes\n\033[0m"
 	@printf "  - Backend setup expects \033[1mcd $(PYTHON_DIR) && uv venv && uv sync\033[0m first.\n"
 	@printf "  - Frontend setup expects \033[1mcd $(FRONTEND_DIR) && npm install\033[0m first.\n"
+	@printf "  - Strava sync expects \033[1mSTRAVA_CLIENT_ID\033[0m, \033[1mSTRAVA_CLIENT_SECRET\033[0m, and a bootstrap \033[1mSTRAVA_REFRESH_TOKEN\033[0m.\n"
 	@printf "  - Production deploy target: \033[1mnpx vercel --prod\033[0m from the repo root.\n\n"
 
 dev:
@@ -40,6 +42,9 @@ dev-api:
 
 dev-web:
 	cd $(FRONTEND_DIR) && npm run dev
+
+sync-strava:
+	cd $(PYTHON_DIR) && uv run python -m apex_portal_api.strava_sync
 
 test: test-api test-web
 
