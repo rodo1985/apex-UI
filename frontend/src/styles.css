@@ -158,31 +158,48 @@ button {
 
 .portal-sidebar-close {
   display: none;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2.8rem;
+  height: 2.8rem;
   margin-left: auto;
   padding: 0;
   position: relative;
-  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(45, 212, 191, 0.14);
   border-radius: 999px;
-  background: transparent;
-  color: var(--muted-strong);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
+    rgba(8, 16, 22, 0.96);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.2);
+  color: var(--teal-text);
 }
 
 .portal-sidebar-close span {
   position: absolute;
-  left: 0.75rem;
-  right: 0.75rem;
-  height: 1.5px;
+  top: 50%;
+  left: 50%;
+  width: 1rem;
+  height: 0.12rem;
   background: currentColor;
+  border-radius: 999px;
+  transform-origin: center;
 }
 
 .portal-sidebar-close span:first-child {
-  transform: rotate(45deg);
+  transform: translate(-50%, -50%) rotate(45deg);
 }
 
 .portal-sidebar-close span:last-child {
-  transform: rotate(-45deg);
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.portal-sidebar-close:hover,
+.portal-sidebar-close:focus-visible {
+  border-color: rgba(45, 212, 191, 0.24);
+  background:
+    linear-gradient(180deg, rgba(45, 212, 191, 0.12), rgba(255, 255, 255, 0.03)),
+    rgba(9, 19, 26, 0.98);
+  outline: none;
 }
 
 .portal-nav {
