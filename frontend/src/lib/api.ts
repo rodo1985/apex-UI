@@ -21,10 +21,50 @@ export interface FoodProduct {
   carbs_g_per_100g: number;
   protein_g_per_100g: number;
   fat_g_per_100g: number;
+  usage: ProductUsageSummary;
+}
+
+export interface ProductUsageSummary {
+  total_usage_occurrences: number;
+  total_usage_days: number;
+  total_grams: number;
+  total_calories: number;
+  window_usage_occurrences: number;
+  window_usage_days: number;
+  window_total_grams: number;
+  window_total_calories: number;
+  first_used_on: string | null;
+  last_used_on: string | null;
 }
 
 export interface FoodProductsResponse {
+  window_date_from: string;
+  window_date_to: string;
+  window_days: number;
   items: FoodProduct[];
+}
+
+export interface ProductUsageTrendDay {
+  date: string;
+  usage_occurrences: number;
+  total_grams: number;
+  total_calories: number;
+}
+
+export interface ProductUsageTrendSummary {
+  logged_days: number;
+  total_usage_occurrences: number;
+  total_grams: number;
+  total_calories: number;
+  last_used_on: string | null;
+}
+
+export interface ProductUsageTrendsResponse {
+  product_id: string;
+  date_from: string;
+  date_to: string;
+  days: ProductUsageTrendDay[];
+  summary: ProductUsageTrendSummary;
 }
 
 export interface DailySummary {
@@ -273,6 +313,55 @@ export async function getBootstrap(
  */
 export async function getProducts(
   accessToken: string | null,
+  dateTo: string,
+  windowDays: number,
 ): Promise<FoodProductsResponse> {
-  return requestJson<FoodProductsResponse>("/portal/products", accessToken);
+  const searchParams = new URLSearchParams({
+    window_days: String(windowDays),
+  });
+
+  if (dateTo.trim()) {
+    searchParams.set("date_to", dateTo);
+  }
+
+  return requestJson<FoodProductsResponse>(
+    `/portal/products?${searchParams.toString()}`,
+    accessToken,
+  );
+}
+
+/**
+ * Load the day-level usage trend for one reusable food product.
+ *
+ * Parameters:
+ *   productId: Product identifier to aggregate.
+ *   dateTo: Inclusive upper date bound for the trend window.
+ *   days: Number of days to include.
+ *   accessToken: Optional portal access token.
+ *
+ * Returns:
+ *   Promise<ProductUsageTrendsResponse>: Daily usage series and summary.
+ *
+ * Raises:
+ *   Error: Raised when the backend request fails.
+ */
+export async function getProductUsageTrends(
+  productId: string,
+  dateTo: string,
+  days: number,
+  accessToken: string | null,
+): Promise<ProductUsageTrendsResponse> {
+  const searchParams = new URLSearchParams({
+    product_id: productId,
+    days: String(days),
+  });
+
+  if (dateTo.trim()) {
+    searchParams.set("date_to", dateTo);
+  }
+
+  return requestJson<ProductUsageTrendsResponse>(
+    `/portal/product-usage/trends?${searchParams.toString()}`,
+    accessToken,
+  );
 }

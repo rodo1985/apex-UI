@@ -20,6 +20,10 @@ from apex_portal_api.models import (
     Meal,
     MealItem,
     PortalProfile,
+    ProductUsageSummary,
+    ProductUsageTrendDay,
+    ProductUsageTrendSummary,
+    ProductUsageTrendsResponse,
     TrendsResponse,
     TrendSummary,
 )
@@ -48,8 +52,23 @@ class PortalStore(ABC):
         """Return the athlete context bound to the current portal."""
 
     @abstractmethod
-    async def list_products(self, subject: str) -> list[FoodProduct]:
+    async def list_products(
+        self,
+        subject: str,
+        reference_date: date,
+        window_days: int,
+    ) -> list[FoodProduct]:
         """Return reusable food products for the current portal subject."""
+
+    @abstractmethod
+    async def get_product_usage_trends(
+        self,
+        subject: str,
+        product_id: str,
+        date_from: date,
+        date_to: date,
+    ) -> ProductUsageTrendsResponse:
+        """Return day-level usage points for one reusable product."""
 
     @abstractmethod
     async def get_daily_snapshot(
@@ -239,11 +258,18 @@ class PostgresPortalStore(PortalStore):
             training_goals_markdown=_record_text(row, "training_goals_markdown"),
         )
 
-    async def list_products(self, subject: str) -> list[FoodProduct]:
+    async def list_products(
+        self,
+        subject: str,
+        reference_date: date,
+        window_days: int,
+    ) -> list[FoodProduct]:
         """Read reusable food products for the configured portal subject.
 
         Parameters:
             subject: Stable subject configured for the portal.
+            reference_date: Inclusive upper bound for the usage summary window.
+            window_days: Number of days to include in the trailing usage window.
 
         Returns:
             list[FoodProduct]: Product rows ordered by name and id.
@@ -253,6 +279,12 @@ class PostgresPortalStore(PortalStore):
         """
 
         schema_variant = await self._get_schema_variant()
+        usage_by_product = await self._get_product_usage_summaries(
+            subject,
+            reference_date,
+            window_days,
+            schema_variant,
+        )
 
         if schema_variant == "legacy":
             rows = await self._fetch(
@@ -312,6 +344,10 @@ class PostgresPortalStore(PortalStore):
                 carbs_g_per_100g=_as_float(row["carbs_g_per_100g"]) or 0,
                 protein_g_per_100g=_as_float(row["protein_g_per_100g"]) or 0,
                 fat_g_per_100g=_as_float(row["fat_g_per_100g"]) or 0,
+                # Product usage stays derived from the meal fact tables so the
+                # portal never relies on a mutable counter as the source of
+                # truth.
+                usage=usage_by_product.get(str(row["id"]), ProductUsageSummary()),
             )
             for row in rows
         ]
@@ -418,6 +454,292 @@ class PostgresPortalStore(PortalStore):
             date_to=date_to,
             days=ordered_days,
             summary=summary,
+        )
+
+    async def get_product_usage_trends(
+        self,
+        subject: str,
+        product_id: str,
+        date_from: date,
+        date_to: date,
+    ) -> ProductUsageTrendsResponse:
+        """Read daily usage points for one reusable food product.
+
+        Parameters:
+            subject: Stable subject configured for the portal.
+            product_id: Product identifier to aggregate.
+            date_from: Inclusive lower date bound.
+            date_to: Inclusive upper date bound.
+
+        Returns:
+            ProductUsageTrendsResponse: Oldest-first day rows plus summary
+                metrics for the selected product.
+
+        Raises:
+            Exception: Propagated from asyncpg when the query fails.
+        """
+
+        rows = await self._fetch_product_usage_trend_rows(subject, product_id, date_from, date_to)
+        days = [
+            ProductUsageTrendDay(
+                date=row["day"],
+                usage_occurrences=_as_int(row["usage_occurrences"]) or 0,
+                total_grams=_as_float(row["total_grams"]) or 0,
+                total_calories=_as_float(row["total_calories"]) or 0,
+            )
+            for row in rows
+        ]
+        summary = ProductUsageTrendSummary(
+            logged_days=len(days),
+            total_usage_occurrences=sum(day.usage_occurrences for day in days),
+            total_grams=round(sum(day.total_grams for day in days), 2),
+            total_calories=round(sum(day.total_calories for day in days), 2),
+            last_used_on=days[-1].date if days else None,
+        )
+        return ProductUsageTrendsResponse(
+            product_id=product_id,
+            date_from=date_from,
+            date_to=date_to,
+            days=days,
+            summary=summary,
+        )
+
+    async def _get_product_usage_summaries(
+        self,
+        subject: str,
+        reference_date: date,
+        window_days: int,
+        schema_variant: str,
+    ) -> dict[str, ProductUsageSummary]:
+        """Build derived product-usage summaries keyed by product id.
+
+        Parameters:
+            subject: Stable subject configured for the portal.
+            reference_date: Inclusive upper bound for the trailing window.
+            window_days: Number of days to include in the trailing window.
+            schema_variant: Active schema variant already resolved by the store.
+
+        Returns:
+            dict[str, ProductUsageSummary]: Usage summaries keyed by product id.
+
+        Raises:
+            Exception: Propagated from asyncpg when the query fails.
+        """
+
+        window_date_from, window_date_to = resolve_window(reference_date, window_days)
+        rows = await self._fetch_product_usage_summary_rows(
+            subject,
+            window_date_from,
+            window_date_to,
+            schema_variant,
+        )
+        return {
+            str(row["product_id"]): ProductUsageSummary(
+                total_usage_occurrences=_as_int(row["total_usage_occurrences"]) or 0,
+                total_usage_days=_as_int(row["total_usage_days"]) or 0,
+                total_grams=_as_float(row["total_grams"]) or 0,
+                total_calories=_as_float(row["total_calories"]) or 0,
+                window_usage_occurrences=_as_int(row["window_usage_occurrences"])
+                or 0,
+                window_usage_days=_as_int(row["window_usage_days"]) or 0,
+                window_total_grams=_as_float(row["window_total_grams"]) or 0,
+                window_total_calories=_as_float(row["window_total_calories"]) or 0,
+                first_used_on=row["first_used_on"],
+                last_used_on=row["last_used_on"],
+            )
+            for row in rows
+        }
+
+    async def _fetch_product_usage_summary_rows(
+        self,
+        subject: str,
+        window_date_from: date,
+        window_date_to: date,
+        schema_variant: str,
+    ) -> list[asyncpg.Record]:
+        """Fetch aggregated product-usage rows for all linked products.
+
+        Parameters:
+            subject: Stable subject configured for the portal.
+            window_date_from: Inclusive lower bound for the trailing window.
+            window_date_to: Inclusive upper bound for the trailing window.
+            schema_variant: Active schema variant already resolved by the store.
+
+        Returns:
+            list[asyncpg.Record]: Aggregated usage rows keyed by product id.
+
+        Raises:
+            Exception: Propagated from asyncpg when the query fails.
+        """
+
+        if schema_variant == "legacy":
+            return await self._fetch(
+                """
+                WITH usage_rows AS (
+                    SELECT
+                        mi.product_id::TEXT AS product_id,
+                        dm.meal_date AS business_date,
+                        mi.grams,
+                        mi.calories
+                    FROM public.daily_meals dm
+                    JOIN public.meal_items mi
+                        ON mi.subject = dm.subject AND mi.meal_id = dm.id
+                    WHERE dm.subject = $1
+                        AND mi.product_id IS NOT NULL
+                )
+                SELECT
+                    product_id,
+                    COUNT(*)::INTEGER AS total_usage_occurrences,
+                    COUNT(DISTINCT business_date)::INTEGER AS total_usage_days,
+                    COALESCE(SUM(grams), 0) AS total_grams,
+                    COALESCE(SUM(calories), 0) AS total_calories,
+                    COUNT(*) FILTER (
+                        WHERE business_date BETWEEN $2 AND $3
+                    )::INTEGER AS window_usage_occurrences,
+                    COUNT(DISTINCT business_date) FILTER (
+                        WHERE business_date BETWEEN $2 AND $3
+                    )::INTEGER AS window_usage_days,
+                    COALESCE(
+                        SUM(grams) FILTER (
+                            WHERE business_date BETWEEN $2 AND $3
+                        ),
+                        0
+                    ) AS window_total_grams,
+                    COALESCE(
+                        SUM(calories) FILTER (
+                            WHERE business_date BETWEEN $2 AND $3
+                        ),
+                        0
+                    ) AS window_total_calories,
+                    MIN(business_date) AS first_used_on,
+                    MAX(business_date) AS last_used_on
+                FROM usage_rows
+                GROUP BY product_id
+                """,
+                subject,
+                window_date_from,
+                window_date_to,
+            )
+
+        user_id = await self._resolve_user_id(subject)
+        return await self._fetch(
+            """
+            WITH usage_rows AS (
+                SELECT
+                    mi.food_id::TEXT AS product_id,
+                    timezone($2, ml.logged_at)::date AS business_date,
+                    mi.quantity_g AS grams,
+                    mi.calories
+                FROM public.meal_logs ml
+                JOIN public.meal_ingredients mi
+                    ON mi.meal_log_id = ml.id
+                WHERE ml.user_id = $1
+                    AND mi.food_id IS NOT NULL
+            )
+            SELECT
+                product_id,
+                COUNT(*)::INTEGER AS total_usage_occurrences,
+                COUNT(DISTINCT business_date)::INTEGER AS total_usage_days,
+                COALESCE(SUM(grams), 0) AS total_grams,
+                COALESCE(SUM(calories), 0) AS total_calories,
+                COUNT(*) FILTER (
+                    WHERE business_date BETWEEN $3 AND $4
+                )::INTEGER AS window_usage_occurrences,
+                COUNT(DISTINCT business_date) FILTER (
+                    WHERE business_date BETWEEN $3 AND $4
+                )::INTEGER AS window_usage_days,
+                COALESCE(
+                    SUM(grams) FILTER (
+                        WHERE business_date BETWEEN $3 AND $4
+                    ),
+                    0
+                ) AS window_total_grams,
+                COALESCE(
+                    SUM(calories) FILTER (
+                        WHERE business_date BETWEEN $3 AND $4
+                    ),
+                    0
+                ) AS window_total_calories,
+                MIN(business_date) AS first_used_on,
+                MAX(business_date) AS last_used_on
+            FROM usage_rows
+            GROUP BY product_id
+            """,
+            user_id,
+            self._portal_timezone,
+            window_date_from,
+            window_date_to,
+        )
+
+    async def _fetch_product_usage_trend_rows(
+        self,
+        subject: str,
+        product_id: str,
+        date_from: date,
+        date_to: date,
+    ) -> list[asyncpg.Record]:
+        """Fetch one product's day-level usage points for a date window.
+
+        Parameters:
+            subject: Stable subject configured for the portal.
+            product_id: Product identifier to aggregate.
+            date_from: Inclusive lower date bound.
+            date_to: Inclusive upper date bound.
+
+        Returns:
+            list[asyncpg.Record]: Oldest-first usage rows keyed by day.
+
+        Raises:
+            Exception: Propagated from asyncpg when the query fails.
+        """
+
+        schema_variant = await self._get_schema_variant()
+
+        if schema_variant == "legacy":
+            return await self._fetch(
+                """
+                SELECT
+                    dm.meal_date AS day,
+                    COUNT(*)::INTEGER AS usage_occurrences,
+                    COALESCE(SUM(mi.grams), 0) AS total_grams,
+                    COALESCE(SUM(mi.calories), 0) AS total_calories
+                FROM public.daily_meals dm
+                JOIN public.meal_items mi
+                    ON mi.subject = dm.subject AND mi.meal_id = dm.id
+                WHERE dm.subject = $1
+                    AND mi.product_id::TEXT = $2
+                    AND dm.meal_date BETWEEN $3 AND $4
+                GROUP BY dm.meal_date
+                ORDER BY dm.meal_date
+                """,
+                subject,
+                product_id,
+                date_from,
+                date_to,
+            )
+
+        user_id = await self._resolve_user_id(subject)
+        return await self._fetch(
+            """
+            SELECT
+                timezone($2, ml.logged_at)::date AS day,
+                COUNT(*)::INTEGER AS usage_occurrences,
+                COALESCE(SUM(mi.quantity_g), 0) AS total_grams,
+                COALESCE(SUM(mi.calories), 0) AS total_calories
+            FROM public.meal_logs ml
+            JOIN public.meal_ingredients mi
+                ON mi.meal_log_id = ml.id
+            WHERE ml.user_id = $1
+                AND mi.food_id::TEXT = $3
+                AND timezone($2, ml.logged_at)::date BETWEEN $4 AND $5
+            GROUP BY timezone($2, ml.logged_at)::date
+            ORDER BY day
+            """,
+            user_id,
+            self._portal_timezone,
+            product_id,
+            date_from,
+            date_to,
         )
 
     async def close(self) -> None:

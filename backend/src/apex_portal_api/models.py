@@ -37,6 +37,44 @@ class PortalProfile(BaseModel):
     training_goals_markdown: str = ""
 
 
+class ProductUsageSummary(BaseModel):
+    """Describe derived product-usage metrics for one athlete and product.
+
+    Parameters:
+        total_usage_occurrences: Number of linked meal items across all time.
+        total_usage_days: Number of distinct business dates on which the product
+            was consumed.
+        total_grams: Total grams logged across all linked usages.
+        total_calories: Total logged calories across all linked usages.
+        window_usage_occurrences: Number of linked meal items inside the
+            selected trailing window.
+        window_usage_days: Number of distinct business dates inside the
+            selected trailing window.
+        window_total_grams: Total grams logged inside the selected window.
+        window_total_calories: Total logged calories inside the selected
+            window.
+        first_used_on: Oldest business date with a linked usage.
+        last_used_on: Most recent business date with a linked usage.
+
+    Returns:
+        ProductUsageSummary: Serializable usage metrics for one product row.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    total_usage_occurrences: int = 0
+    total_usage_days: int = 0
+    total_grams: float = 0
+    total_calories: float = 0
+    window_usage_occurrences: int = 0
+    window_usage_days: int = 0
+    window_total_grams: float = 0
+    window_total_calories: float = 0
+    first_used_on: date | None = None
+    last_used_on: date | None = None
+
+
 class FoodProduct(BaseModel):
     """Describe one reusable food product from the MCP catalog.
 
@@ -48,6 +86,7 @@ class FoodProduct(BaseModel):
         carbs_g_per_100g: Carbohydrate grams for one hundred grams.
         protein_g_per_100g: Protein grams for one hundred grams.
         fat_g_per_100g: Fat grams for one hundred grams.
+        usage: Derived product-usage metrics for favorites and trends.
 
     Returns:
         FoodProduct: Serializable food product row for the portal table.
@@ -63,12 +102,16 @@ class FoodProduct(BaseModel):
     carbs_g_per_100g: float
     protein_g_per_100g: float
     fat_g_per_100g: float
+    usage: ProductUsageSummary = Field(default_factory=ProductUsageSummary)
 
 
 class FoodProductsResponse(BaseModel):
     """Represent the reusable food product list returned by the backend.
 
     Parameters:
+        window_date_from: Inclusive lower bound for the usage summary window.
+        window_date_to: Inclusive upper bound for the usage summary window.
+        window_days: Number of days used for the trailing usage window.
         items: Food products ordered by product name.
 
     Returns:
@@ -78,7 +121,80 @@ class FoodProductsResponse(BaseModel):
         This model does not raise errors directly.
     """
 
+    window_date_from: date
+    window_date_to: date
+    window_days: int
     items: list[FoodProduct] = Field(default_factory=list)
+
+
+class ProductUsageTrendDay(BaseModel):
+    """Describe one day inside a per-product usage trend series.
+
+    Parameters:
+        date: Business date covered by the trend point.
+        usage_occurrences: Number of linked meal items for the product.
+        total_grams: Total grams logged for the product that day.
+        total_calories: Total calories logged for the product that day.
+
+    Returns:
+        ProductUsageTrendDay: Serializable daily usage point.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    date: date
+    usage_occurrences: int = 0
+    total_grams: float = 0
+    total_calories: float = 0
+
+
+class ProductUsageTrendSummary(BaseModel):
+    """Represent rolled-up product-usage metrics for one trend window.
+
+    Parameters:
+        logged_days: Number of days with at least one linked usage.
+        total_usage_occurrences: Number of linked meal items in the window.
+        total_grams: Total grams logged in the window.
+        total_calories: Total calories logged in the window.
+        last_used_on: Most recent business date with a linked usage.
+
+    Returns:
+        ProductUsageTrendSummary: Window-level usage metrics.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    logged_days: int = 0
+    total_usage_occurrences: int = 0
+    total_grams: float = 0
+    total_calories: float = 0
+    last_used_on: date | None = None
+
+
+class ProductUsageTrendsResponse(BaseModel):
+    """Represent the daily usage trend for one reusable food product.
+
+    Parameters:
+        product_id: Product identifier requested by the client.
+        date_from: Inclusive lower bound for the trend window.
+        date_to: Inclusive upper bound for the trend window.
+        days: Logged daily usage points ordered oldest first.
+        summary: Rolled-up usage metrics for the selected window.
+
+    Returns:
+        ProductUsageTrendsResponse: Serializable per-product trend response.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    product_id: str
+    date_from: date
+    date_to: date
+    days: list[ProductUsageTrendDay] = Field(default_factory=list)
+    summary: ProductUsageTrendSummary
 
 
 class DailySummary(BaseModel):

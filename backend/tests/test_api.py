@@ -20,6 +20,10 @@ from apex_portal_api.models import (
     Meal,
     MealItem,
     PortalProfile,
+    ProductUsageSummary,
+    ProductUsageTrendsResponse,
+    ProductUsageTrendDay,
+    ProductUsageTrendSummary,
     TrendsResponse,
     TrendSummary,
 )
@@ -123,9 +127,16 @@ class FakePortalStore(PortalStore):
             ],
         )
 
-    async def list_products(self, subject: str) -> list[FoodProduct]:
+    async def list_products(
+        self,
+        subject: str,
+        reference_date: date,
+        window_days: int,
+    ) -> list[FoodProduct]:
         """Return a small reusable product catalog for the test subject."""
 
+        assert reference_date == date(2026, 4, 16)
+        assert window_days == 30
         return [
             FoodProduct(
                 id="food-1",
@@ -135,8 +146,58 @@ class FakePortalStore(PortalStore):
                 carbs_g_per_100g=66,
                 protein_g_per_100g=13,
                 fat_g_per_100g=7,
+                usage=ProductUsageSummary(
+                    total_usage_occurrences=12,
+                    total_usage_days=8,
+                    total_grams=480,
+                    total_calories=1843.2,
+                    window_usage_occurrences=4,
+                    window_usage_days=3,
+                    window_total_grams=160,
+                    window_total_calories=614.4,
+                    first_used_on=date(2026, 3, 2),
+                    last_used_on=date(2026, 4, 16),
+                ),
             )
         ]
+
+    async def get_product_usage_trends(
+        self,
+        subject: str,
+        product_id: str,
+        date_from: date,
+        date_to: date,
+    ) -> ProductUsageTrendsResponse:
+        """Return a deterministic per-product trend result for tests."""
+
+        assert subject == "athlete-1"
+        assert product_id == "food-1"
+        return ProductUsageTrendsResponse(
+            product_id=product_id,
+            date_from=date_from,
+            date_to=date_to,
+            days=[
+                ProductUsageTrendDay(
+                    date=date(2026, 4, 14),
+                    usage_occurrences=1,
+                    total_grams=40,
+                    total_calories=153.6,
+                ),
+                ProductUsageTrendDay(
+                    date=date(2026, 4, 16),
+                    usage_occurrences=2,
+                    total_grams=70,
+                    total_calories=268.8,
+                ),
+            ],
+            summary=ProductUsageTrendSummary(
+                logged_days=2,
+                total_usage_occurrences=3,
+                total_grams=110,
+                total_calories=422.4,
+                last_used_on=date(2026, 4, 16),
+            ),
+        )
 
     async def get_history(
         self,
@@ -319,5 +380,25 @@ def test_products_route_returns_expected_shape() -> None:
 
     assert response.status_code == 200
     payload = FoodProductsResponse.model_validate(response.json())
+    assert payload.window_date_to == date(2026, 4, 16)
+    assert payload.window_days == 30
     assert payload.items[0].name == "Rolled oats"
     assert payload.items[0].protein_g_per_100g == 13
+    assert payload.items[0].usage.window_usage_occurrences == 4
+    assert payload.items[0].usage.total_usage_occurrences == 12
+
+
+def test_product_usage_trends_route_returns_expected_shape() -> None:
+    """Ensure the product-usage trends route returns the configured series."""
+
+    client = build_test_client()
+
+    response = client.get(
+        "/portal/product-usage/trends?product_id=food-1&date_to=2026-04-16&days=30"
+    )
+
+    assert response.status_code == 200
+    payload = ProductUsageTrendsResponse.model_validate(response.json())
+    assert payload.product_id == "food-1"
+    assert payload.summary.total_usage_occurrences == 3
+    assert payload.days[0].date == date(2026, 4, 14)

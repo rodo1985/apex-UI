@@ -28,6 +28,7 @@ const TOKEN_STORAGE_KEY = "apex.portal.accessToken";
 const DEFAULT_ACCESS_TOKEN = import.meta.env.VITE_PORTAL_ACCESS_TOKEN ?? null;
 const HISTORY_WINDOW_OPTIONS = [14, 28, 56, 84];
 const TREND_WINDOW_OPTIONS = [28, 56, 84, 168];
+const PRODUCT_USAGE_WINDOW_DAYS = 30;
 
 type TrendMetric = "food" | "exercise" | "protein" | "carbs" | "fat" | "load";
 type ProgressTone = "food" | "protein" | "carbs" | "fat";
@@ -37,7 +38,10 @@ type ProductsSortKey =
   | "calories_per_100g"
   | "carbs_g_per_100g"
   | "protein_g_per_100g"
-  | "fat_g_per_100g";
+  | "fat_g_per_100g"
+  | "usage_window_occurrences"
+  | "usage_total_occurrences"
+  | "last_used_on";
 type SortDirection = "asc" | "desc";
 type ViewStatus = "loading" | "ready" | "unlock" | "error";
 type ProductsStatus = "idle" | "loading" | "ready" | "error";
@@ -82,6 +86,8 @@ export default function App() {
     useState<ProductsStatus>("idle");
   const [productsErrorMessage, setProductsErrorMessage] = useState<string>("");
   const [productsReloadNonce, setProductsReloadNonce] = useState<number>(0);
+  const productsReferenceDate =
+    selectedDate.trim() || portalData?.snapshot.date || "";
 
   useEffect(() => {
     if (
@@ -198,7 +204,11 @@ export default function App() {
       return;
     }
 
-    if (productsData !== null) {
+    if (
+      productsData !== null &&
+      productsData.window_date_to === productsReferenceDate &&
+      productsData.window_days === PRODUCT_USAGE_WINDOW_DAYS
+    ) {
       return;
     }
 
@@ -209,7 +219,11 @@ export default function App() {
       setProductsErrorMessage("");
 
       try {
-        const nextProducts = await getProducts(accessToken);
+        const nextProducts = await getProducts(
+          accessToken,
+          productsReferenceDate,
+          PRODUCT_USAGE_WINDOW_DAYS,
+        );
         if (cancelled) {
           return;
         }
@@ -249,7 +263,13 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, activeView, productsData, productsReloadNonce]);
+  }, [
+    accessToken,
+    activeView,
+    productsData,
+    productsReferenceDate,
+    productsReloadNonce,
+  ]);
 
   const deferredTrendDays = useDeferredValue(portalData?.trends.days ?? []);
 
@@ -301,7 +321,7 @@ export default function App() {
         <FoodProductsView
           status={productsStatus}
           errorMessage={productsErrorMessage}
-          products={productsData?.items ?? []}
+          productsResponse={productsData}
           onRetry={handleRetryProducts}
         />
       ) : null}
@@ -801,7 +821,7 @@ function ProfileView({ profile }: { profile: PortalProfile }) {
  * Parameters:
  *   status: Current async status for the products fetch.
  *   errorMessage: Error shown when the fetch fails.
- *   products: Cached product rows.
+ *   productsResponse: Cached product rows plus usage-window metadata.
  *   onRetry: Callback used to retry after an error.
  *
  * Returns:
@@ -813,14 +833,15 @@ function ProfileView({ profile }: { profile: PortalProfile }) {
 function FoodProductsView({
   status,
   errorMessage,
-  products,
+  productsResponse,
   onRetry,
 }: {
   status: ProductsStatus;
   errorMessage: string;
-  products: FoodProduct[];
+  productsResponse: FoodProductsResponse | null;
   onRetry: () => void;
 }) {
+  const products = productsResponse?.items ?? [];
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [sortKey, setSortKey] = useState<ProductsSortKey>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -841,7 +862,8 @@ function FoodProductsView({
           <h2>Reusable catalog</h2>
           <p className="section-copy">
             Review the saved food products that power faster meal logging in
-            APEX.
+            APEX, plus how often each linked product appears in recent and
+            lifetime meal history.
           </p>
         </div>
       </div>
@@ -891,6 +913,9 @@ function FoodProductsView({
                   <option value="carbs_g_per_100g">Carbs</option>
                   <option value="protein_g_per_100g">Protein</option>
                   <option value="fat_g_per_100g">Fat</option>
+                  <option value="usage_window_occurrences">Uses (30d)</option>
+                  <option value="usage_total_occurrences">Uses (all time)</option>
+                  <option value="last_used_on">Last used</option>
                 </select>
               </label>
 
@@ -912,6 +937,13 @@ function FoodProductsView({
               <span>
                 {visibleProducts.length} of {products.length} foods shown
               </span>
+              {productsResponse ? (
+                <span>
+                  Usage window: {formatShortDate(productsResponse.window_date_from)} to{" "}
+                  {formatShortDate(productsResponse.window_date_to)}. Cells show
+                  recent / all-time linked uses.
+                </span>
+              ) : null}
             </div>
 
             {visibleProducts.length === 0 ? (
@@ -939,6 +971,12 @@ function FoodProductsView({
                       <th>
                         <ProductsTableHeading label="Fat" unit="/100g" />
                       </th>
+                      <th>
+                        <ProductsTableHeading label="Uses" unit="30d / all" />
+                      </th>
+                      <th>
+                        <ProductsTableHeading label="Last used" />
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -950,6 +988,8 @@ function FoodProductsView({
                         <td>{formatTableValue(product.carbs_g_per_100g, "g")}</td>
                         <td>{formatTableValue(product.protein_g_per_100g, "g")}</td>
                         <td>{formatTableValue(product.fat_g_per_100g, "g")}</td>
+                        <td>{formatProductUsageValue(product)}</td>
+                        <td>{formatProductLastUsed(product)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2027,7 +2067,59 @@ function getProductSortValue(
   product: FoodProduct,
   sortKey: Exclude<ProductsSortKey, "name">,
 ): number | null {
+  if (sortKey === "usage_window_occurrences") {
+    return product.usage.window_usage_occurrences;
+  }
+
+  if (sortKey === "usage_total_occurrences") {
+    return product.usage.total_usage_occurrences;
+  }
+
+  if (sortKey === "last_used_on") {
+    if (!product.usage.last_used_on) {
+      return null;
+    }
+
+    return Date.parse(product.usage.last_used_on);
+  }
+
   return product[sortKey];
+}
+
+/**
+ * Format one product's recent and lifetime usage counts for the table.
+ *
+ * Parameters:
+ *   product: Product row with derived usage metrics.
+ *
+ * Returns:
+ *   string: Display string like `3 / 12`.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatProductUsageValue(product: FoodProduct): string {
+  return `${product.usage.window_usage_occurrences} / ${product.usage.total_usage_occurrences}`;
+}
+
+/**
+ * Format the most recent linked usage date for one product.
+ *
+ * Parameters:
+ *   product: Product row with derived usage metrics.
+ *
+ * Returns:
+ *   string: Short date label or `Never`.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatProductLastUsed(product: FoodProduct): string {
+  if (!product.usage.last_used_on) {
+    return "Never";
+  }
+
+  return formatShortDate(product.usage.last_used_on);
 }
 
 /**

@@ -65,7 +65,8 @@ flowchart LR
   Interactive multi-series SVG chart with point tooltips for achieved versus
   target trend views.
 - `frontend/src/lib/api.ts`
-  Small fetch client for the backend endpoints, including the product catalog.
+  Small fetch client for the backend endpoints, including the product catalog
+  and per-product usage trend reads.
 
 ### Backend
 
@@ -92,6 +93,14 @@ The backend reads from these existing tables:
 
 The portal does not write to those tables. It only aggregates and presents the
 data already stored by the MCP workflows.
+
+Product usage analytics are derived from the linked meal fact tables:
+
+- legacy: `daily_meals` + `meal_items.product_id`
+- normalized: `meal_logs` + `meal_ingredients.food_id`
+
+That keeps favorites and trends aligned with meal edits and deletes without
+introducing a mutable product counter.
 
 ## Important Design Decisions
 
@@ -144,8 +153,23 @@ The current read-only routes are:
 - `/portal/bootstrap`
 - `/portal/day`
 - `/portal/products`
+- `/portal/product-usage/trends`
 - `/portal/history`
 - `/portal/trends`
+
+### Derived product usage analytics
+
+The product catalog now includes additive usage summaries computed from linked
+meal rows. Each product response includes:
+
+- trailing-window linked uses
+- lifetime linked uses
+- last-used date
+
+The trailing window is controlled by `date_to` and `window_days` on
+`/portal/products`, while `/portal/product-usage/trends` exposes an oldest-first
+daily series for one product. The implementation details and rollout notes live
+in [PRODUCT_CONSUMPTION_ANALYTICS.md](PRODUCT_CONSUMPTION_ANALYTICS.md).
 
 ## Outputs
 
@@ -154,7 +178,8 @@ The user-facing outputs are:
 - a today snapshot with stacked meal and activity detail
 - a profile page with metrics and stored markdown documents in open-layout
   sections
-- a reusable food product table with search and sort controls
+- a reusable food product table with search, sort, recent-use, lifetime-use,
+  and last-used data
 - a history list with current-versus-target nutrition chips for each logged day
 - a trends view showing longer-term evolution plus target overlays for food and
   macro metrics

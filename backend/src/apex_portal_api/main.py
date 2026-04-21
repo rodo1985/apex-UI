@@ -16,6 +16,7 @@ from apex_portal_api.models import (
     DailySnapshot,
     FoodProductsResponse,
     HistoryResponse,
+    ProductUsageTrendsResponse,
     TrendsResponse,
 )
 from apex_portal_api.store import PortalStore, PostgresPortalStore, resolve_window
@@ -233,12 +234,16 @@ def create_app(
 
     @app.get("/portal/products", response_model=FoodProductsResponse)
     async def get_products(
+        date_to: date | None = Query(default=None),
+        window_days: int = Query(default=30, ge=7, le=365),
         _: None = Depends(require_access),
         store_dependency: PortalStore = Depends(current_store),
     ) -> FoodProductsResponse:
         """Return the reusable food products bound to the current subject.
 
         Parameters:
+            date_to: Optional inclusive upper bound for the usage window.
+            window_days: Number of days to include in the trailing usage window.
             _: Access-control dependency for the optional bearer token.
             store_dependency: Store dependency injected by FastAPI.
 
@@ -250,8 +255,27 @@ def create_app(
             Exception: Propagated by the backing store when queries fail.
         """
 
+        requested_date = date_to or _today_in_timezone(
+            resolved_settings.portal_timezone
+        )
+        reference_date = (
+            date_to
+            if date_to is not None
+            else await store_dependency.get_default_date(
+                resolved_settings.portal_subject,
+                requested_date,
+            )
+        )
+        window_date_from, window_date_to = resolve_window(reference_date, window_days)
         return FoodProductsResponse(
-            items=await store_dependency.list_products(resolved_settings.portal_subject)
+            window_date_from=window_date_from,
+            window_date_to=window_date_to,
+            window_days=window_days,
+            items=await store_dependency.list_products(
+                resolved_settings.portal_subject,
+                reference_date,
+                window_days,
+            ),
         )
 
     @app.get("/portal/history", response_model=HistoryResponse)
@@ -332,6 +356,53 @@ def create_app(
         date_from, safe_date_to = resolve_window(reference_date, days)
         return await store_dependency.get_trends(
             resolved_settings.portal_subject,
+            date_from,
+            safe_date_to,
+        )
+
+    @app.get(
+        "/portal/product-usage/trends",
+        response_model=ProductUsageTrendsResponse,
+    )
+    async def get_product_usage_trends(
+        product_id: str = Query(..., min_length=1),
+        date_to: date | None = Query(default=None),
+        days: int = Query(default=84, ge=14, le=365),
+        _: None = Depends(require_access),
+        store_dependency: PortalStore = Depends(current_store),
+    ) -> ProductUsageTrendsResponse:
+        """Return product-usage trend data for one reusable food product.
+
+        Parameters:
+            product_id: Product identifier to aggregate.
+            date_to: Optional inclusive upper bound, defaults to today's date.
+            days: Number of days to include.
+            _: Access-control dependency for the optional bearer token.
+            store_dependency: Store dependency injected by FastAPI.
+
+        Returns:
+            ProductUsageTrendsResponse: Oldest-first usage rows plus summary.
+
+        Raises:
+            HTTPException: Propagated by the access dependency when unauthorized.
+            Exception: Propagated by the backing store when queries fail.
+        """
+
+        requested_date = date_to or _today_in_timezone(
+            resolved_settings.portal_timezone
+        )
+        reference_date = (
+            date_to
+            if date_to is not None
+            else await store_dependency.get_default_date(
+                resolved_settings.portal_subject,
+                requested_date,
+            )
+        )
+        date_from, safe_date_to = resolve_window(reference_date, days)
+        return await store_dependency.get_product_usage_trends(
+            resolved_settings.portal_subject,
+            product_id,
             date_from,
             safe_date_to,
         )

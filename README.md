@@ -22,11 +22,15 @@ track how fuelling and training are evolving over time.
 - Shows a dedicated profile view with body metrics and stored APEX profile
   documents.
 - Shows a dedicated food product table for reusable foods already stored in the
-  MCP database, including client-side search and sorting controls.
+  MCP database, including client-side search, sorting controls, and derived
+  usage analytics from linked meal history.
 - Shows past tracked days with nutrition-first summary chips for food,
   exercise, and macro adherence.
 - Shows evolution trends for food, exercise, macros, activity load, and
   target-versus-achieved overlays where target data exists.
+- Adds read-only product usage analytics for favorites and future suggestions:
+  trailing-window uses, lifetime uses, last-used date, and a per-product usage
+  trend endpoint.
 - Adds a collapsible desktop icon rail plus a mobile sidebar drawer for easier
   navigation across screen sizes.
 - Reuses the APEX visual language: dark workspace, teal brand accent, and APEX
@@ -120,6 +124,18 @@ make lint
 make build
 ```
 
+### Product analytics API queries
+
+The backend now exposes additive read-only product usage endpoints:
+
+```bash
+curl "http://127.0.0.1:8000/portal/products?window_days=30&date_to=2026-04-16"
+curl "http://127.0.0.1:8000/portal/product-usage/trends?product_id=food-1&days=84&date_to=2026-04-16"
+```
+
+When `APEX_PORTAL_ACCESS_TOKEN` is configured, include the matching bearer
+token in the `Authorization` header for those requests.
+
 ## Configuration
 
 ### Backend environment variables
@@ -142,6 +158,10 @@ Required:
 The backend detects the connected Supabase schema automatically, so local
 development can point either at the current production database or at the
 newer normalized wellness schema used by related projects.
+
+Product usage analytics are derived from linked meal items or meal ingredients
+at read time. This repo does not persist a mutable `usage_count` on product
+rows, which keeps counts aligned with meal edits, deletes, and replayed data.
 
 Recommended:
 
@@ -169,8 +189,7 @@ Recommended:
 
 ### Frontend environment variables
 
-Copy [frontend/.env.example](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/frontend/.env.example)
-to `frontend/.env.local`.
+Copy [frontend/.env.example](frontend/.env.example) to `frontend/.env.local`.
 
 - `VITE_API_BASE_URL`
   Optional API base override. Defaults to `/api`.
@@ -181,17 +200,19 @@ to `frontend/.env.local`.
 
 ## Project Structure
 
-- [backend](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/backend)
+- [backend](backend)
   FastAPI service, Supabase/Postgres read queries, and backend tests.
-- [frontend](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/frontend)
+- [frontend](frontend)
   Vite React portal, APEX-inspired UI, and frontend tests.
-- [docs/APEX_PORTAL_IMPLEMENTATION.md](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/docs/APEX_PORTAL_IMPLEMENTATION.md)
+- [docs/APEX_PORTAL_IMPLEMENTATION.md](docs/APEX_PORTAL_IMPLEMENTATION.md)
   Human-readable implementation guide for the portal architecture and workflow.
+- [docs/PRODUCT_CONSUMPTION_ANALYTICS.md](docs/PRODUCT_CONSUMPTION_ANALYTICS.md)
+  Human-readable guide for the derived product usage analytics workflow.
 - [docs/STRAVA_SYNC_IMPLEMENTATION.md](docs/STRAVA_SYNC_IMPLEMENTATION.md)
   Human-readable guide for the lightweight Strava ingestion workflow.
-- [vercel.json](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/vercel.json)
+- [vercel.json](vercel.json)
   Root Vercel Services configuration for the frontend and backend.
-- [Makefile](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/Makefile)
+- [Makefile](Makefile)
   Guided development commands for local work.
 
 ## Vercel Deployment
@@ -241,7 +262,10 @@ deployed on Vercel.
   activity sync into `public.activities`.
 - Keep the portal queries aligned with the `apex-mcp-server` tables and daily
   summary semantics.
+- Keep product usage metrics derived from meal facts rather than adding mutable
+  counters to `food_products` or `food_items`.
 - Update this README and
-  [docs/APEX_PORTAL_IMPLEMENTATION.md](/Users/REDONSX1/.codex/worktrees/410e/apex-UI/docs/APEX_PORTAL_IMPLEMENTATION.md)
+  [docs/APEX_PORTAL_IMPLEMENTATION.md](docs/APEX_PORTAL_IMPLEMENTATION.md)
+  plus [docs/PRODUCT_CONSUMPTION_ANALYTICS.md](docs/PRODUCT_CONSUMPTION_ANALYTICS.md)
   plus [docs/STRAVA_SYNC_IMPLEMENTATION.md](docs/STRAVA_SYNC_IMPLEMENTATION.md)
   whenever setup, API behavior, or deployment changes.

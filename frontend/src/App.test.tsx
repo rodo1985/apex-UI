@@ -5,6 +5,9 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import App from "./App";
 
 const productsPayload = {
+  window_date_from: "2026-03-18",
+  window_date_to: "2026-04-16",
+  window_days: 30,
   items: [
     {
       id: "food-2",
@@ -14,6 +17,18 @@ const productsPayload = {
       carbs_g_per_100g: 19,
       protein_g_per_100g: 21,
       fat_g_per_100g: 56,
+      usage: {
+        total_usage_occurrences: 6,
+        total_usage_days: 4,
+        total_grams: 120,
+        total_calories: 736.8,
+        window_usage_occurrences: 2,
+        window_usage_days: 2,
+        window_total_grams: 40,
+        window_total_calories: 245.6,
+        first_used_on: "2026-03-11",
+        last_used_on: "2026-04-10",
+      },
     },
     {
       id: "food-1",
@@ -23,6 +38,18 @@ const productsPayload = {
       carbs_g_per_100g: 66,
       protein_g_per_100g: 13,
       fat_g_per_100g: 7,
+      usage: {
+        total_usage_occurrences: 12,
+        total_usage_days: 8,
+        total_grams: 480,
+        total_calories: 1843.2,
+        window_usage_occurrences: 4,
+        window_usage_days: 3,
+        window_total_grams: 160,
+        window_total_calories: 614.4,
+        first_used_on: "2026-03-02",
+        last_used_on: "2026-04-16",
+      },
     },
   ],
 };
@@ -288,9 +315,14 @@ describe("App", () => {
       expect(screen.getByRole("button", { name: "Profile" })).toBeInTheDocument(),
     );
 
-    expect(getAuthorizationHeader(fetchMock)).toBe(
-      `Bearer ${import.meta.env.VITE_PORTAL_ACCESS_TOKEN}`,
-    );
+    if (import.meta.env.VITE_PORTAL_ACCESS_TOKEN) {
+      expect(getAuthorizationHeader(fetchMock)).toBe(
+        `Bearer ${import.meta.env.VITE_PORTAL_ACCESS_TOKEN}`,
+      );
+      return;
+    }
+
+    expect(getAuthorizationHeader(fetchMock)).toBeUndefined();
   });
 
   test("renders the updated portal shell and new nav items", async () => {
@@ -345,6 +377,11 @@ describe("App", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(
+      fetchMock.mock.calls[1]?.[0]?.toString().includes(
+        "window_days=30&date_to=2026-04-16",
+      ),
+    ).toBe(true);
   });
 
   test("toggles the desktop sidebar from the shell menu button", async () => {
@@ -447,18 +484,28 @@ describe("App", () => {
       "Carbs/100g",
       "Protein/100g",
       "Fat/100g",
+      "Uses30d / all",
+      "Last used",
     ]);
+    expect(
+      screen.queryByText(/Usage window: Apr 18 to Apr 16/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Usage window: Mar 18 to Apr 16. Cells show recent / all-time linked uses."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "4 / 12" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "Apr 16" })).toBeInTheDocument();
 
     await user.type(searchInput, "oats");
     expect(screen.getByRole("cell", { name: "Rolled oats" })).toBeInTheDocument();
     expect(screen.queryByRole("cell", { name: "Almond butter" })).not.toBeInTheDocument();
 
     await user.clear(searchInput);
-    await user.selectOptions(screen.getByLabelText("Sort"), "calories_per_100g");
+    await user.selectOptions(screen.getByLabelText("Sort"), "usage_window_occurrences");
     await user.selectOptions(screen.getByLabelText("Direction"), "desc");
 
     const dataRows = screen.getAllByRole("row").slice(1);
-    expect(within(dataRows[0]).getByRole("cell", { name: "Almond butter" })).toBeInTheDocument();
+    expect(within(dataRows[0]).getByRole("cell", { name: "Rolled oats" })).toBeInTheDocument();
   });
 
   test("renders history nutrition chips and trend metric toggles", async () => {
