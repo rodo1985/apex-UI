@@ -552,12 +552,12 @@ class StravaSyncStore:
             if not rows:
                 raise StravaSyncError(
                     "Unable to resolve an APEX user id from Postgres. Set "
-                    "APEX_PORTAL_USER_ID in backend/.env or backend/.env.local."
+                    "APEX_PORTAL_USER_ID in backend/.env."
                 )
 
             raise StravaSyncError(
                 "Multiple APEX user ids are present in Postgres. Set "
-                "APEX_PORTAL_USER_ID in backend/.env or backend/.env.local."
+                "APEX_PORTAL_USER_ID in backend/.env."
             )
 
     async def get_tokens(self, user_id: str) -> StravaTokenBundle | None:
@@ -1107,7 +1107,7 @@ def _require_strava_api_credentials(settings: Settings) -> None:
         raise StravaSyncError(
             "Strava sync is not configured. Set "
             + ", ".join(missing_variables)
-            + " in backend/.env, backend/.env.local, or the deployment environment."
+            + " in backend/.env or the deployment environment."
         )
 
 

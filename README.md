@@ -66,11 +66,10 @@ track how fuelling and training are evolving over time.
 cd backend
 uv venv
 uv sync
-cp .env.template .env.local
+cp .env.example .env
 ```
 
-The backend reads environment variables from `backend/.env` first and then lets
-`backend/.env.local` override any local-only values.
+The backend reads environment variables from `backend/.env`.
 
 ### Frontend setup
 
@@ -125,8 +124,7 @@ make build
 
 ### Backend environment variables
 
-Copy [backend/.env.template](backend/.env.template) to `backend/.env.local`.
-If you prefer, you can also keep shared local values in `backend/.env`.
+Copy [backend/.env.example](backend/.env.example) to `backend/.env`.
 
 Required:
 
