@@ -4,6 +4,13 @@ import { useState } from "react";
  * Lightweight SVG chart used by the trends view.
  */
 
+const MAX_AXIS_LABELS = 4;
+
+type AxisLabel = {
+  index: number;
+  label: string;
+};
+
 /**
  * Render a compact SVG line chart for one numeric series.
  *
@@ -98,6 +105,7 @@ export function TrendChart({
   const activePoint = chartPoints.at(resolvedActiveIndex) ?? null;
   const activeComparisonPoint =
     comparisonPoints?.at(resolvedActiveIndex) ?? null;
+  const axisLabels = getTrendAxisLabels(labels);
 
   return (
     <div className="trend-chart">
@@ -188,13 +196,61 @@ export function TrendChart({
         ) : null}
       </svg>
 
-      <div className="trend-chart-labels">
-        {labels.map((label) => (
-          <span key={label}>{label}</span>
+      <div className="trend-chart-labels" aria-hidden="true">
+        {axisLabels.map((axisLabel) => (
+          <span
+            key={`${axisLabel.label}-${axisLabel.index}`}
+            data-edge={
+              axisLabel.index === 0
+                ? "start"
+                : axisLabel.index === labels.length - 1
+                  ? "end"
+                  : undefined
+            }
+            style={{
+              left: `${((chartPoints[axisLabel.index]?.x ?? padding) / width) * 100}%`,
+            }}
+          >
+            {axisLabel.label}
+          </span>
         ))}
       </div>
     </div>
   );
+}
+
+/**
+ * Return the visible x-axis labels for a trend chart.
+ *
+ * Parameters:
+ *   labels: All chronological labels that correspond to plotted points.
+ *
+ * Returns:
+ *   AxisLabel[]: A small, evenly spaced set of labels including the endpoints.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function getTrendAxisLabels(labels: string[]): AxisLabel[] {
+  if (labels.length <= MAX_AXIS_LABELS) {
+    return labels.map((label, index) => ({ index, label }));
+  }
+
+  const lastIndex = labels.length - 1;
+  const selectedIndexes = new Set<number>();
+
+  for (let slot = 0; slot < MAX_AXIS_LABELS; slot += 1) {
+    selectedIndexes.add(
+      Math.round((slot / (MAX_AXIS_LABELS - 1)) * lastIndex),
+    );
+  }
+
+  return Array.from(selectedIndexes)
+    .sort((left, right) => left - right)
+    .map((index) => ({
+      index,
+      label: labels[index],
+    }));
 }
 
 /**

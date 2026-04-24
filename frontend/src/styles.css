@@ -1117,9 +1117,17 @@ button {
   color: var(--muted-strong);
 }
 
+.trend-chart {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .trend-chart svg {
+  display: block;
   width: 100%;
+  max-width: 100%;
   height: auto;
+  overflow: hidden;
 }
 
 .trend-chart-point {
@@ -1131,12 +1139,33 @@ button {
 }
 
 .trend-chart-labels {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
+  position: relative;
+  min-width: 0;
+  height: 1.35rem;
   margin-top: 0.8rem;
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.trend-chart-labels span {
+  position: absolute;
+  top: 0;
+  max-width: 4.75rem;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.trend-chart-labels span[data-edge="start"] {
+  text-align: left;
+  transform: none;
+}
+
+.trend-chart-labels span[data-edge="end"] {
+  text-align: right;
+  transform: translateX(-100%);
 }
 
 .status-screen {
@@ -1346,10 +1375,5 @@ button {
   .ingredient-metric-pill {
     width: 100%;
     min-width: 0;
-  }
-
-  .trend-chart-labels {
-    overflow-x: auto;
-    white-space: nowrap;
   }
 }

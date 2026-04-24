@@ -27,4 +27,35 @@ describe("TrendChart", () => {
     expect(screen.getByText("150 kcal")).toBeInTheDocument();
     expect(screen.getByText("Target")).toBeInTheDocument();
   });
+
+  test("keeps a long mobile trend window from rendering every axis label", () => {
+    const labels = Array.from({ length: 84 }, (_, index) => `Day ${index + 1}`);
+
+    const { container } = render(
+      <TrendChart
+        values={labels.map((_, index) => index + 100)}
+        comparisonValues={labels.map(() => 180)}
+        labels={labels}
+        accent="#16A34A"
+        comparisonAccent="#CBD5E1"
+        valueLabel="Achieved"
+        comparisonLabel="Target"
+        formatValue={(value) => `${value} kcal`}
+      />,
+    );
+
+    const visibleAxisLabels = container.querySelectorAll(
+      ".trend-chart-labels span",
+    );
+    const visibleAxisLabelText = Array.from(visibleAxisLabels).map(
+      (labelElement) => labelElement.textContent,
+    );
+
+    expect(visibleAxisLabels).toHaveLength(4);
+    expect(visibleAxisLabelText).toContain("Day 1");
+    expect(visibleAxisLabelText).toContain("Day 84");
+    expect(
+      screen.getByLabelText("Show trend value for Day 84"),
+    ).toBeInTheDocument();
+  });
 });
