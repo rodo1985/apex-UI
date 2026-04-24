@@ -21,11 +21,13 @@ track how fuelling and training are evolving over time.
 - Shows a dedicated profile view with body metrics and stored APEX profile
   documents.
 - Shows a dedicated food product table for reusable foods already stored in the
-  MCP database, including client-side search and sorting controls.
+  MCP database, including usage counts, client-side search, and sorting
+  controls.
 - Shows past tracked days with nutrition-first summary chips for food,
   exercise, and macro adherence.
-- Shows evolution trends for food, exercise, macros, activity load, and
-  target-versus-achieved overlays where target data exists.
+- Shows evolution trends for food, exercise, macros, activity load, and dynamic
+  `public.daily_metrics` series such as sleep, plus target-versus-achieved
+  overlays where target data exists.
 - Adds a collapsible desktop icon rail plus a mobile sidebar drawer for easier
   navigation across screen sizes.
 - Reuses the APEX visual language: dark workspace, teal brand accent, and APEX
@@ -39,7 +41,9 @@ track how fuelling and training are evolving over time.
   `public.daily_meals`, `public.meal_items`, `public.activity_entries`) or the
   newer normalized tables (`public.food_items`,
   `public.daily_nutrition_targets`, `public.meal_logs`,
-  `public.meal_ingredients`, `public.activities`).
+  `public.meal_ingredients`, `public.activities`). The optional
+  `public.daily_metrics` table adds dynamic trend metrics grouped by
+  `metric_type`.
 
 ### Out Of Scope
 

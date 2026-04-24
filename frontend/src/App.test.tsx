@@ -14,6 +14,7 @@ const productsPayload = {
       carbs_g_per_100g: 19,
       protein_g_per_100g: 21,
       fat_g_per_100g: 56,
+      usage_count: 9,
     },
     {
       id: "food-1",
@@ -23,6 +24,7 @@ const productsPayload = {
       carbs_g_per_100g: 66,
       protein_g_per_100g: 13,
       fat_g_per_100g: 7,
+      usage_count: 22,
     },
   ],
 };
@@ -168,6 +170,16 @@ function buildBootstrapPayload(targetDate = "2026-04-16") {
           total_suffer_score: 236,
         },
         daySummary,
+      ],
+      daily_metrics: [
+        {
+          metric_type: "sleep_hours",
+          points: [
+            { date: "2026-04-14", value: 7.68 },
+            { date: "2026-04-15", value: 7.93 },
+            { date: "2026-04-16", value: 7.38 },
+          ],
+        },
       ],
       summary: {
         logged_days: 3,
@@ -347,6 +359,31 @@ describe("App", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  test("requests the new trend windows from the toolbar", async () => {
+    const fetchMock = mockPortalFetch();
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Trends" }));
+    expect(screen.getByRole("button", { name: "7d" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "30d" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "90d" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "365d" })).toBeInTheDocument();
+
+    expect(fetchMock.mock.calls[0]?.[0].toString()).toContain("trend_days=90");
+
+    await user.click(screen.getByRole("button", { name: "7d" }));
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          url.toString().includes("trend_days=7"),
+        ),
+      ).toBe(true),
+    );
+  });
+
   test("toggles the desktop sidebar from the shell menu button", async () => {
     mockPortalFetch();
     const user = userEvent.setup();
@@ -447,6 +484,7 @@ describe("App", () => {
       "Carbs/100g",
       "Protein/100g",
       "Fat/100g",
+      "Usedtimes",
     ]);
 
     await user.type(searchInput, "oats");
@@ -459,6 +497,12 @@ describe("App", () => {
 
     const dataRows = screen.getAllByRole("row").slice(1);
     expect(within(dataRows[0]).getByRole("cell", { name: "Almond butter" })).toBeInTheDocument();
+    expect(within(dataRows[1]).getByRole("cell", { name: "22" })).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Sort"), "usage_count");
+
+    const usageSortedRows = screen.getAllByRole("row").slice(1);
+    expect(within(usageSortedRows[0]).getByRole("cell", { name: "Rolled oats" })).toBeInTheDocument();
   });
 
   test("renders history nutrition chips and trend metric toggles", async () => {
@@ -476,6 +520,11 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Trends" }));
     expect(screen.getByRole("button", { name: "Carbs intake" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Fat intake" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sleep hours" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Sleep hours" }));
+    expect(screen.getByRole("heading", { name: "Sleep hours" })).toBeInTheDocument();
+    expect(screen.getByText("7.4 h")).toBeInTheDocument();
   });
 
   test("shows the unlock screen after a 401 response", async () => {

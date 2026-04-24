@@ -48,6 +48,7 @@ class FoodProduct(BaseModel):
         carbs_g_per_100g: Carbohydrate grams for one hundred grams.
         protein_g_per_100g: Protein grams for one hundred grams.
         fat_g_per_100g: Fat grams for one hundred grams.
+        usage_count: Number of logged meal items that reused this product.
 
     Returns:
         FoodProduct: Serializable food product row for the portal table.
@@ -63,6 +64,7 @@ class FoodProduct(BaseModel):
     carbs_g_per_100g: float
     protein_g_per_100g: float
     fat_g_per_100g: float
+    usage_count: int = 0
 
 
 class FoodProductsResponse(BaseModel):
@@ -349,6 +351,42 @@ class TrendSummary(BaseModel):
     total_activities: int = 0
 
 
+class DailyMetricPoint(BaseModel):
+    """Represent one value from the `daily_metrics` table.
+
+    Parameters:
+        date: Business date represented by the metric row.
+        value: Numeric metric value for that date.
+
+    Returns:
+        DailyMetricPoint: Serializable daily metric point for trend charts.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    date: date
+    value: float
+
+
+class DailyMetricSeries(BaseModel):
+    """Group daily metric points that share the same metric type.
+
+    Parameters:
+        metric_type: Raw metric type from Supabase, for example `sleep_hours`.
+        points: Chronological metric values for the selected trend window.
+
+    Returns:
+        DailyMetricSeries: Chart-ready dynamic metric series.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    metric_type: str
+    points: list[DailyMetricPoint] = Field(default_factory=list)
+
+
 class TrendsResponse(BaseModel):
     """Represent the trend series used by the frontend charts.
 
@@ -356,6 +394,7 @@ class TrendsResponse(BaseModel):
         date_from: Inclusive lower bound for the trend window.
         date_to: Inclusive upper bound for the trend window.
         days: Day summaries ordered oldest first.
+        daily_metrics: Dynamic metric series grouped by metric type.
         summary: Rolled-up window statistics.
 
     Returns:
@@ -368,6 +407,7 @@ class TrendsResponse(BaseModel):
     date_from: date
     date_to: date
     days: list[HistoryDay] = Field(default_factory=list)
+    daily_metrics: list[DailyMetricSeries] = Field(default_factory=list)
     summary: TrendSummary
 
 

@@ -9,6 +9,7 @@ import {
   getProducts,
   type BootstrapResponse,
   type DailySnapshot,
+  type DailyMetricSeries,
   type FoodProduct,
   type FoodProductsResponse,
   type HistoryDay,
@@ -27,9 +28,27 @@ import {
 const TOKEN_STORAGE_KEY = "apex.portal.accessToken";
 const DEFAULT_ACCESS_TOKEN = import.meta.env.VITE_PORTAL_ACCESS_TOKEN ?? null;
 const HISTORY_WINDOW_OPTIONS = [14, 28, 56, 84];
-const TREND_WINDOW_OPTIONS = [28, 56, 84, 168];
+const TREND_WINDOW_OPTIONS = [7, 30, 90, 365];
+const BUILT_IN_TREND_METRICS = [
+  "food",
+  "exercise",
+  "protein",
+  "carbs",
+  "fat",
+  "load",
+] as const;
+const DAILY_METRIC_COLORS = [
+  "#A78BFA",
+  "#F472B6",
+  "#34D399",
+  "#F59E0B",
+  "#38BDF8",
+  "#F87171",
+] as const;
 
-type TrendMetric = "food" | "exercise" | "protein" | "carbs" | "fat" | "load";
+type BuiltInTrendMetric = (typeof BUILT_IN_TREND_METRICS)[number];
+type DailyTrendMetric = `daily_metric:${string}`;
+type TrendMetric = BuiltInTrendMetric | DailyTrendMetric;
 type ProgressTone = "food" | "protein" | "carbs" | "fat";
 type ProductsSortKey =
   | "name"
@@ -37,7 +56,8 @@ type ProductsSortKey =
   | "calories_per_100g"
   | "carbs_g_per_100g"
   | "protein_g_per_100g"
-  | "fat_g_per_100g";
+  | "fat_g_per_100g"
+  | "usage_count";
 type SortDirection = "asc" | "desc";
 type ViewStatus = "loading" | "ready" | "unlock" | "error";
 type ProductsStatus = "idle" | "loading" | "ready" | "error";
@@ -61,7 +81,7 @@ export default function App() {
   const [activeView, setActiveView] = useState<PortalView>("today");
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [historyDays, setHistoryDays] = useState<number>(28);
-  const [trendDays, setTrendDays] = useState<number>(84);
+  const [trendDays, setTrendDays] = useState<number>(90);
   const [trendMetric, setTrendMetric] = useState<TrendMetric>("food");
   const [reloadNonce, setReloadNonce] = useState<number>(0);
   const [sidebarVisible, setSidebarVisible] = useState<boolean>(() =>
@@ -321,6 +341,7 @@ export default function App() {
           trendDays={trendDays}
           trendMetric={trendMetric}
           days={deferredTrendDays}
+          dailyMetrics={portalData.trends.daily_metrics}
           summary={portalData.trends.summary}
           onChangeMetric={setTrendMetric}
           onChangeWindow={setTrendDays}
@@ -891,6 +912,7 @@ function FoodProductsView({
                   <option value="carbs_g_per_100g">Carbs</option>
                   <option value="protein_g_per_100g">Protein</option>
                   <option value="fat_g_per_100g">Fat</option>
+                  <option value="usage_count">Times used</option>
                 </select>
               </label>
 
@@ -939,6 +961,9 @@ function FoodProductsView({
                       <th>
                         <ProductsTableHeading label="Fat" unit="/100g" />
                       </th>
+                      <th>
+                        <ProductsTableHeading label="Used" unit="times" />
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -950,6 +975,7 @@ function FoodProductsView({
                         <td>{formatTableValue(product.carbs_g_per_100g, "g")}</td>
                         <td>{formatTableValue(product.protein_g_per_100g, "g")}</td>
                         <td>{formatTableValue(product.fat_g_per_100g, "g")}</td>
+                        <td>{formatUsageCount(product.usage_count)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1092,6 +1118,7 @@ function HistoryView({
  *   trendDays: Active trend window size.
  *   trendMetric: Selected metric for the chart.
  *   days: Chronological trend days.
+ *   dailyMetrics: Dynamic metric series grouped by metric type.
  *   summary: Rolled-up window metrics.
  *   onChangeMetric: Callback used when the metric changes.
  *   onChangeWindow: Callback used when the window changes.
@@ -1106,6 +1133,7 @@ function TrendsView({
   trendDays,
   trendMetric,
   days,
+  dailyMetrics,
   summary,
   onChangeMetric,
   onChangeWindow,
@@ -1113,14 +1141,34 @@ function TrendsView({
   trendDays: number;
   trendMetric: TrendMetric;
   days: HistoryDay[];
+  dailyMetrics: DailyMetricSeries[];
   summary: BootstrapResponse["trends"]["summary"];
   onChangeMetric: (value: TrendMetric) => void;
   onChangeWindow: (value: number) => void;
 }) {
-  const metricMeta = getTrendMetricMeta(trendMetric);
-  const chartValues = days.map((day) => metricMeta.pickValue(day));
-  const targetValues = days.map((day) => metricMeta.pickTarget(day));
-  const chartLabels = days.map((day) => formatShortDate(day.date));
+  const selectedDailyMetric = getSelectedDailyMetric(trendMetric, dailyMetrics);
+  const activeMetric =
+    selectedDailyMetric || !isDailyTrendMetric(trendMetric)
+      ? trendMetric
+      : "food";
+  const dailyMetricIndex = selectedDailyMetric
+    ? dailyMetrics.findIndex(
+        (dailyMetric) =>
+          dailyMetric.metric_type === selectedDailyMetric.metric_type,
+      )
+    : -1;
+  const metricMeta = selectedDailyMetric
+    ? getDailyMetricMeta(selectedDailyMetric.metric_type, dailyMetricIndex)
+    : getTrendMetricMeta(activeMetric as BuiltInTrendMetric);
+  const chartValues = selectedDailyMetric
+    ? selectedDailyMetric.points.map((point) => point.value)
+    : days.map((day) => metricMeta.pickValue(day));
+  const targetValues = selectedDailyMetric
+    ? []
+    : days.map((day) => metricMeta.pickTarget(day));
+  const chartLabels = selectedDailyMetric
+    ? selectedDailyMetric.points.map((point) => formatShortDate(point.date))
+    : days.map((day) => formatShortDate(day.date));
 
   return (
     <section className="portal-section">
@@ -1143,20 +1191,33 @@ function TrendsView({
       </div>
 
       <div className="trend-toolbar">
-        {(
-          ["food", "exercise", "protein", "carbs", "fat", "load"] as TrendMetric[]
-        ).map(
+        {BUILT_IN_TREND_METRICS.map(
           (metric) => (
             <button
               key={metric}
               type="button"
-              className={`trend-toggle${metric === trendMetric ? " active" : ""}`}
+              className={`trend-toggle${metric === activeMetric ? " active" : ""}`}
               onClick={() => onChangeMetric(metric)}
             >
               {getTrendMetricMeta(metric).label}
             </button>
           ),
         )}
+        {dailyMetrics.map((dailyMetric) => {
+          const dailyMetricKey = getDailyMetricKey(dailyMetric.metric_type);
+          return (
+            <button
+              key={dailyMetricKey}
+              type="button"
+              className={`trend-toggle${
+                dailyMetricKey === activeMetric ? " active" : ""
+              }`}
+              onClick={() => onChangeMetric(dailyMetricKey)}
+            >
+              {formatMetricTypeLabel(dailyMetric.metric_type)}
+            </button>
+          );
+        })}
       </div>
 
       <div className="panel">
@@ -1919,6 +1980,22 @@ function formatTableValue(value: number | null, suffix: string): string {
 }
 
 /**
+ * Format the reuse count for one food product.
+ *
+ * Parameters:
+ *   usageCount: Number of meal-item logs that reused the product.
+ *
+ * Returns:
+ *   string: Table-safe formatted usage count.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatUsageCount(usageCount: number): string {
+  return Math.max(0, Math.round(usageCount)).toLocaleString();
+}
+
+/**
  * Format the meals and activities count summary for one history day.
  *
  * Parameters:
@@ -2042,7 +2119,7 @@ function getProductSortValue(
  * Raises:
  *   This helper does not raise errors directly.
  */
-function getTrendMetricMeta(metric: TrendMetric) {
+function getTrendMetricMeta(metric: BuiltInTrendMetric) {
   if (metric === "exercise") {
     return {
       label: "Exercise calories",
@@ -2124,4 +2201,166 @@ function getTrendMetricMeta(metric: TrendMetric) {
     pickTarget: (day: HistoryDay) => day.target_food_calories,
     formatValue: (value: number) => formatCalories(value),
   };
+}
+
+/**
+ * Return the selected dynamic daily metric series when it is available.
+ *
+ * Parameters:
+ *   trendMetric: Currently selected trend metric key.
+ *   dailyMetrics: Dynamic daily metric series from the backend.
+ *
+ * Returns:
+ *   DailyMetricSeries | null: Matching dynamic series, or `null`.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function getSelectedDailyMetric(
+  trendMetric: TrendMetric,
+  dailyMetrics: DailyMetricSeries[],
+): DailyMetricSeries | null {
+  if (!isDailyTrendMetric(trendMetric)) {
+    return null;
+  }
+
+  const metricType = trendMetric.replace("daily_metric:", "");
+  return (
+    dailyMetrics.find((dailyMetric) => dailyMetric.metric_type === metricType) ??
+    null
+  );
+}
+
+/**
+ * Return whether a trend metric key represents a dynamic daily metric.
+ *
+ * Parameters:
+ *   trendMetric: Trend metric key selected in the toolbar.
+ *
+ * Returns:
+ *   boolean: `true` when the metric key points at `daily_metrics`.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function isDailyTrendMetric(
+  trendMetric: TrendMetric,
+): trendMetric is DailyTrendMetric {
+  return trendMetric.startsWith("daily_metric:");
+}
+
+/**
+ * Build the stable toolbar key for one dynamic daily metric type.
+ *
+ * Parameters:
+ *   metricType: Raw metric type from Supabase.
+ *
+ * Returns:
+ *   DailyTrendMetric: UI key used by the Trends toolbar.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function getDailyMetricKey(metricType: string): DailyTrendMetric {
+  return `daily_metric:${metricType}` as DailyTrendMetric;
+}
+
+/**
+ * Return the display configuration for one dynamic daily metric.
+ *
+ * Parameters:
+ *   metricType: Raw metric type from Supabase.
+ *   metricIndex: Position of the metric series in the backend response.
+ *
+ * Returns:
+ *   Object with label, subtitle, color, and value formatting helpers.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function getDailyMetricMeta(metricType: string, metricIndex: number) {
+  const label = formatMetricTypeLabel(metricType);
+  const color =
+    DAILY_METRIC_COLORS[
+      Math.max(0, metricIndex) % DAILY_METRIC_COLORS.length
+    ];
+
+  return {
+    label,
+    subtitle: `Daily ${label.toLowerCase()} from Supabase metrics`,
+    color,
+    targetColor: "#CBD5E1",
+    valueLabel: "Value",
+    targetLabel: null,
+    pickValue: () => 0,
+    pickTarget: () => null,
+    formatValue: (value: number) => formatDailyMetricValue(metricType, value),
+  };
+}
+
+/**
+ * Convert a raw metric type into a readable label.
+ *
+ * Parameters:
+ *   metricType: Raw metric type from Supabase, usually snake_case.
+ *
+ * Returns:
+ *   string: Human-readable metric label.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatMetricTypeLabel(metricType: string): string {
+  const words = metricType
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (words.length === 0) {
+    return "Daily metric";
+  }
+
+  return words
+    .map((word, index) =>
+      index === 0
+        ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+        : word.toLowerCase(),
+    )
+    .join(" ");
+}
+
+/**
+ * Format a dynamic daily metric value with a best-effort unit.
+ *
+ * Parameters:
+ *   metricType: Raw metric type from Supabase.
+ *   value: Numeric metric value for one date.
+ *
+ * Returns:
+ *   string: Compact value display for the trend tooltip.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatDailyMetricValue(metricType: string, value: number): string {
+  const formattedValue =
+    Number.isInteger(value) || Math.abs(value) >= 10
+      ? value.toFixed(0)
+      : value.toFixed(1);
+  const normalizedType = metricType.toLowerCase();
+
+  if (normalizedType.includes("hour")) {
+    return `${formattedValue} h`;
+  }
+
+  if (normalizedType.includes("calorie") || normalizedType.endsWith("kcal")) {
+    return formatCalories(value);
+  }
+
+  if (normalizedType.includes("percent") || normalizedType.endsWith("_pct")) {
+    return `${formattedValue}%`;
+  }
+
+  return formattedValue;
 }

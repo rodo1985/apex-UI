@@ -38,6 +38,7 @@ def test_list_products_maps_food_product_rows() -> None:
         """
 
         assert "FROM public.food_items" in query
+        assert "usage_count AS usage_count" in query
         assert args == ()
         return [
             {
@@ -48,12 +49,16 @@ def test_list_products_maps_food_product_rows() -> None:
                 "carbs_g_per_100g": 3.6,
                 "protein_g_per_100g": 9.8,
                 "fat_g_per_100g": 5.0,
+                "usage_count": 14,
             }
         ]
 
     store._fetch = fake_fetch  # type: ignore[method-assign]
     store._get_schema_variant = (  # type: ignore[method-assign]
         lambda: asyncio.sleep(0, result="normalized")
+    )
+    store._table_has_column = (  # type: ignore[method-assign]
+        lambda table_name, column_name: asyncio.sleep(0, result=True)
     )
 
     products = asyncio.run(store.list_products("athlete-1"))
@@ -63,6 +68,216 @@ def test_list_products_maps_food_product_rows() -> None:
     assert products[0].name == "Greek yogurt"
     assert products[0].default_serving_g == 170.0
     assert products[0].fat_g_per_100g == 5.0
+    assert products[0].usage_count == 14
+
+
+def test_list_products_defaults_usage_count_when_column_is_missing() -> None:
+    """Ensure product rows stay readable before the usage-count migration lands.
+
+    Parameters:
+        None.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: Raised when the fallback query stops returning zero.
+    """
+
+    store = PostgresPortalStore("postgresql://example")
+
+    async def fake_fetch(query: str, *args: object) -> list[dict[str, object]]:
+        """Return deterministic product rows for the fallback mapping test.
+
+        Parameters:
+            query: SQL query requested by the store.
+            *args: Query arguments supplied by the caller.
+
+        Returns:
+            list[dict[str, object]]: Fake product rows with fallback usage count.
+
+        Raises:
+            AssertionError: Raised when the fallback SQL changes unexpectedly.
+        """
+
+        assert "0 AS usage_count" in query
+        assert args == ()
+        return [
+            {
+                "id": "food-8",
+                "name": "Banana",
+                "default_serving_g": 118.0,
+                "calories_per_100g": 89.0,
+                "carbs_g_per_100g": 23.0,
+                "protein_g_per_100g": 1.1,
+                "fat_g_per_100g": 0.3,
+                "usage_count": 0,
+            }
+        ]
+
+    store._fetch = fake_fetch  # type: ignore[method-assign]
+    store._get_schema_variant = (  # type: ignore[method-assign]
+        lambda: asyncio.sleep(0, result="normalized")
+    )
+    store._table_has_column = (  # type: ignore[method-assign]
+        lambda table_name, column_name: asyncio.sleep(0, result=False)
+    )
+
+    products = asyncio.run(store.list_products("athlete-1"))
+
+    assert len(products) == 1
+    assert products[0].name == "Banana"
+    assert products[0].usage_count == 0
+
+
+def test_daily_metric_series_groups_rows_by_metric_type() -> None:
+    """Ensure daily metrics are grouped into chart-ready series.
+
+    Parameters:
+        None.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: Raised when dynamic metrics stop grouping correctly.
+    """
+
+    store = PostgresPortalStore("postgresql://example")
+
+    async def fake_fetch(query: str, *args: object) -> list[dict[str, object]]:
+        """Return deterministic daily metric rows for the grouping test.
+
+        Parameters:
+            query: SQL query requested by the store.
+            *args: Query arguments supplied by the caller.
+
+        Returns:
+            list[dict[str, object]]: Fake daily metric rows.
+
+        Raises:
+            AssertionError: Raised when the query or arguments change.
+        """
+
+        assert "FROM public.daily_metrics" in query
+        assert "GROUP BY metric_type, metric_date" in query
+        assert args == ("athlete-1", date(2026, 4, 12), date(2026, 4, 14))
+        return [
+            {
+                "metric_type": "sleep_hours",
+                "metric_date": date(2026, 4, 12),
+                "value": 7.28,
+            },
+            {
+                "metric_type": "sleep_hours",
+                "metric_date": date(2026, 4, 13),
+                "value": 8.37,
+            },
+            {
+                "metric_type": "readiness_score",
+                "metric_date": date(2026, 4, 13),
+                "value": 82.0,
+            },
+        ]
+
+    store._fetch = fake_fetch  # type: ignore[method-assign]
+    store._table_has_column = (  # type: ignore[method-assign]
+        lambda table_name, column_name: asyncio.sleep(0, result=True)
+    )
+
+    series = asyncio.run(
+        store._get_daily_metric_series(
+            "athlete-1",
+            date(2026, 4, 12),
+            date(2026, 4, 14),
+        )
+    )
+
+    assert [metric.metric_type for metric in series] == [
+        "readiness_score",
+        "sleep_hours",
+    ]
+    assert series[1].points[0].date == date(2026, 4, 12)
+    assert series[1].points[0].value == 7.28
+    assert series[1].points[1].value == 8.37
+
+
+def test_daily_metric_series_returns_empty_when_table_is_missing() -> None:
+    """Ensure missing `daily_metrics` support does not break trends.
+
+    Parameters:
+        None.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: Raised when missing metadata no longer returns empty.
+    """
+
+    store = PostgresPortalStore("postgresql://example")
+
+    store._table_has_column = (  # type: ignore[method-assign]
+        lambda table_name, column_name: asyncio.sleep(0, result=False)
+    )
+
+    series = asyncio.run(
+        store._get_daily_metric_series(
+            "athlete-1",
+            date(2026, 4, 12),
+            date(2026, 4, 14),
+        )
+    )
+
+    assert series == []
+
+
+def test_default_date_considers_latest_daily_metric_date() -> None:
+    """Ensure dynamic metrics can anchor the default trend window.
+
+    Parameters:
+        None.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: Raised when daily metrics stop influencing defaults.
+    """
+
+    store = PostgresPortalStore("postgresql://example")
+
+    async def fake_fetchrow(query: str, *args: object) -> dict[str, object]:
+        """Return an older tracked day for the default-date query.
+
+        Parameters:
+            query: SQL query requested by the store.
+            *args: Query arguments supplied by the caller.
+
+        Returns:
+            dict[str, object]: Fake aggregate default-day row.
+
+        Raises:
+            AssertionError: Raised when the query or arguments change.
+        """
+
+        assert "MAX(day) AS default_day" in query
+        assert args == ("athlete-1", date(2026, 4, 24))
+        return {"default_day": date(2026, 4, 21)}
+
+    store._fetchrow = fake_fetchrow  # type: ignore[method-assign]
+    store._get_schema_variant = (  # type: ignore[method-assign]
+        lambda: asyncio.sleep(0, result="legacy")
+    )
+    store._get_latest_daily_metric_date = (  # type: ignore[method-assign]
+        lambda subject, fallback_date: asyncio.sleep(0, result=date(2026, 4, 23))
+    )
+
+    default_date = asyncio.run(
+        store.get_default_date("athlete-1", date(2026, 4, 24))
+    )
+
+    assert default_date == date(2026, 4, 23)
 
 
 def test_get_history_days_maps_macro_targets() -> None:
@@ -186,6 +401,7 @@ def test_legacy_list_products_uses_subject_scoped_table() -> None:
         """
 
         assert "FROM public.food_products" in query
+        assert "usage_count AS usage_count" in query
         assert args == ("athlete-1",)
         return [
             {
@@ -196,6 +412,7 @@ def test_legacy_list_products_uses_subject_scoped_table() -> None:
                 "carbs_g_per_100g": 3.6,
                 "protein_g_per_100g": 9.8,
                 "fat_g_per_100g": 5.0,
+                "usage_count": 8,
             }
         ]
 
@@ -203,9 +420,13 @@ def test_legacy_list_products_uses_subject_scoped_table() -> None:
     store._get_schema_variant = (  # type: ignore[method-assign]
         lambda: asyncio.sleep(0, result="legacy")
     )
+    store._table_has_column = (  # type: ignore[method-assign]
+        lambda table_name, column_name: asyncio.sleep(0, result=True)
+    )
 
     products = asyncio.run(store.list_products("athlete-1"))
 
     assert len(products) == 1
     assert products[0].id == "7"
     assert products[0].name == "Legacy yogurt"
+    assert products[0].usage_count == 8

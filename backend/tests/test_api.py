@@ -11,6 +11,8 @@ from apex_portal_api.main import create_app
 from apex_portal_api.models import (
     Activity,
     BootstrapResponse,
+    DailyMetricPoint,
+    DailyMetricSeries,
     DailySnapshot,
     DailySummary,
     FoodProduct,
@@ -135,6 +137,7 @@ class FakePortalStore(PortalStore):
                 carbs_g_per_100g=66,
                 protein_g_per_100g=13,
                 fat_g_per_100g=7,
+                usage_count=22,
             )
         ]
 
@@ -204,6 +207,14 @@ class FakePortalStore(PortalStore):
                     total_moving_time_seconds=3933,
                     total_elevation_gain_meters=127,
                     total_suffer_score=212,
+                )
+            ],
+            daily_metrics=[
+                DailyMetricSeries(
+                    metric_type="sleep_hours",
+                    points=[
+                        DailyMetricPoint(date=date_to, value=7.5),
+                    ],
                 )
             ],
             summary=TrendSummary(
@@ -296,6 +307,19 @@ def test_history_route_uses_requested_window() -> None:
     assert payload.days[0].total_distance_meters == 13020
 
 
+def test_trends_route_accepts_one_week_window() -> None:
+    """Ensure the trends route accepts the one-week window query parameter."""
+
+    client = build_test_client()
+
+    response = client.get("/portal/trends?date_to=2026-04-16&days=7")
+
+    assert response.status_code == 200
+    payload = TrendsResponse.model_validate(response.json())
+    assert payload.date_to == date(2026, 4, 16)
+    assert payload.summary.logged_days == 1
+
+
 def test_bootstrap_uses_store_default_date_when_target_date_is_omitted() -> None:
     """Ensure bootstrap falls back to the store-provided default day."""
 
@@ -306,6 +330,7 @@ def test_bootstrap_uses_store_default_date_when_target_date_is_omitted() -> None
     assert response.status_code == 200
     payload = BootstrapResponse.model_validate(response.json())
     assert payload.snapshot.date == date(2026, 4, 16)
+    assert payload.trends.daily_metrics[0].metric_type == "sleep_hours"
 
 
 def test_products_route_returns_expected_shape() -> None:
@@ -319,3 +344,4 @@ def test_products_route_returns_expected_shape() -> None:
     payload = FoodProductsResponse.model_validate(response.json())
     assert payload.items[0].name == "Rolled oats"
     assert payload.items[0].protein_g_per_100g == 13
+    assert payload.items[0].usage_count == 22

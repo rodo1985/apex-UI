@@ -7,7 +7,7 @@ MCP wellness backend. It gives the athlete a simple place to review:
 
 - the current day
 - recent logged days
-- longer-term trends in fuelling and training
+- longer-term trends in fuelling, training, and dynamic daily metrics
 
 This repo intentionally does not recreate the full product workspace. The goal
 is a focused review surface that is easy to deploy, easy to understand, and
@@ -29,6 +29,7 @@ one website and quickly answer questions such as:
 - Which reusable food products already exist in the catalog?
 - Which previous days are worth reviewing?
 - Is my fuelling and training trend moving in the right direction?
+- How are custom daily metrics, such as sleep, changing over time?
 
 ## What Is Deployed
 
@@ -89,6 +90,9 @@ The backend reads from these existing tables:
 - Or the newer normalized schema:
   `public.food_items`, `public.daily_nutrition_targets`,
   `public.meal_logs`, `public.meal_ingredients`, `public.activities`
+- Optional dynamic trend metrics from `public.daily_metrics`, grouped by
+  `metric_type` and filtered by `subject`, `metric_date`, and the selected
+  trend window
 
 The portal does not write to those tables. It only aggregates and presents the
 data already stored by the MCP workflows.
@@ -135,6 +139,7 @@ The backend only exposes the reporting views the portal needs:
 - one day snapshot
 - history summaries
 - trend series
+- dynamic daily metric series
 
 That keeps the backend small and lowers the risk of drifting away from the
 authoritative MCP data model.
@@ -154,10 +159,12 @@ The user-facing outputs are:
 - a today snapshot with stacked meal and activity detail
 - a profile page with metrics and stored markdown documents in open-layout
   sections
-- a reusable food product table with search and sort controls
+- a reusable food product table with usage counts, search, and sort controls
 - a history list with current-versus-target nutrition chips for each logged day
 - a trends view showing longer-term evolution plus target overlays for food and
   macro metrics
+- dynamic trend toggles for each `public.daily_metrics.metric_type`, with one
+  chart series per metric type
 
 ## Dependencies
 

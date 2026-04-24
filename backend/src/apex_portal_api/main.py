@@ -145,7 +145,7 @@ def create_app(
     async def bootstrap_portal(
         target_date: date | None = Query(default=None),
         history_days: int = Query(default=28, ge=7, le=180),
-        trend_days: int = Query(default=84, ge=14, le=365),
+        trend_days: int = Query(default=90, ge=7, le=365),
         _: None = Depends(require_access),
         store_dependency: PortalStore = Depends(current_store),
     ) -> BootstrapResponse:
@@ -300,7 +300,7 @@ def create_app(
     @app.get("/portal/trends", response_model=TrendsResponse)
     async def get_trends(
         date_to: date | None = Query(default=None),
-        days: int = Query(default=84, ge=14, le=365),
+        days: int = Query(default=90, ge=7, le=365),
         _: None = Depends(require_access),
         store_dependency: PortalStore = Depends(current_store),
     ) -> TrendsResponse:

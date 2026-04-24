@@ -12,6 +12,8 @@ import asyncpg
 
 from apex_portal_api.models import (
     Activity,
+    DailyMetricPoint,
+    DailyMetricSeries,
     DailySnapshot,
     DailySummary,
     FoodProduct,
@@ -197,7 +199,17 @@ class PostgresPortalStore(PortalStore):
                 fallback_date,
             )
 
-        return row["default_day"] if row and row["default_day"] else fallback_date
+        default_day = (
+            row["default_day"] if row and row["default_day"] else fallback_date
+        )
+        daily_metric_day = await self._get_latest_daily_metric_date(
+            subject,
+            fallback_date,
+        )
+        if daily_metric_day and daily_metric_day > default_day:
+            return daily_metric_day
+
+        return default_day
 
     async def get_profile(self, subject: str) -> PortalProfile:
         """Read the athlete context from the MCP profile row.
@@ -253,10 +265,16 @@ class PostgresPortalStore(PortalStore):
         """
 
         schema_variant = await self._get_schema_variant()
+        table_name = "food_products" if schema_variant == "legacy" else "food_items"
+        usage_count_column = (
+            "usage_count"
+            if await self._table_has_column(table_name, "usage_count")
+            else "0"
+        )
 
         if schema_variant == "legacy":
             rows = await self._fetch(
-                """
+                f"""
                 SELECT
                     id,
                     name,
@@ -264,7 +282,8 @@ class PostgresPortalStore(PortalStore):
                     calories_per_100g,
                     carbs_g_per_100g,
                     protein_g_per_100g,
-                    fat_g_per_100g
+                    fat_g_per_100g,
+                    {usage_count_column} AS usage_count
                 FROM public.food_products
                 WHERE subject = $1
                 ORDER BY LOWER(name), id
@@ -273,7 +292,7 @@ class PostgresPortalStore(PortalStore):
             )
         else:
             rows = await self._fetch(
-                """
+                f"""
                 SELECT
                     id,
                     name,
@@ -297,7 +316,8 @@ class PostgresPortalStore(PortalStore):
                         WHEN serving_unit = 'g' AND serving_size > 0
                             THEN fat_g * 100.0 / serving_size
                         ELSE fat_g
-                    END AS fat_g_per_100g
+                    END AS fat_g_per_100g,
+                    {usage_count_column} AS usage_count
                 FROM public.food_items
                 ORDER BY LOWER(name), id
                 """,
@@ -312,6 +332,7 @@ class PostgresPortalStore(PortalStore):
                 carbs_g_per_100g=_as_float(row["carbs_g_per_100g"]) or 0,
                 protein_g_per_100g=_as_float(row["protein_g_per_100g"]) or 0,
                 fat_g_per_100g=_as_float(row["fat_g_per_100g"]) or 0,
+                usage_count=_as_int(row["usage_count"]) or 0,
             )
             for row in rows
         ]
@@ -386,6 +407,11 @@ class PostgresPortalStore(PortalStore):
         """
 
         history_days = await self._get_history_days(subject, date_from, date_to)
+        daily_metrics = await self._get_daily_metric_series(
+            subject,
+            date_from,
+            date_to,
+        )
         ordered_days = list(reversed(history_days))
         logged_days = len(ordered_days)
         average_food = (
@@ -417,6 +443,7 @@ class PostgresPortalStore(PortalStore):
             date_from=date_from,
             date_to=date_to,
             days=ordered_days,
+            daily_metrics=daily_metrics,
             summary=summary,
         )
 
@@ -1079,6 +1106,101 @@ class PostgresPortalStore(PortalStore):
             for row in rows
         ]
 
+    async def _get_daily_metric_series(
+        self,
+        subject: str,
+        date_from: date,
+        date_to: date,
+    ) -> list[DailyMetricSeries]:
+        """Read dynamic daily metrics grouped by metric type.
+
+        Parameters:
+            subject: Stable subject configured for the portal.
+            date_from: Inclusive lower date bound.
+            date_to: Inclusive upper date bound.
+
+        Returns:
+            list[DailyMetricSeries]: Chronological metric series for trend charts.
+
+        Raises:
+            Exception: Propagated from asyncpg when the query fails.
+        """
+
+        if not await self._table_has_column("daily_metrics", "metric_type"):
+            return []
+
+        rows = await self._fetch(
+            """
+            SELECT
+                metric_type,
+                metric_date,
+                AVG(value) AS value
+            FROM public.daily_metrics
+            WHERE subject = $1
+                AND metric_date BETWEEN $2 AND $3
+            GROUP BY metric_type, metric_date
+            ORDER BY LOWER(metric_type), metric_type, metric_date
+            """,
+            subject,
+            date_from,
+            date_to,
+        )
+
+        grouped_points: dict[str, list[DailyMetricPoint]] = defaultdict(list)
+        for row in rows:
+            metric_type = str(row["metric_type"] or "").strip()
+            metric_value = _as_float(row["value"])
+            if not metric_type or metric_value is None:
+                continue
+
+            grouped_points[metric_type].append(
+                DailyMetricPoint(
+                    date=row["metric_date"],
+                    value=metric_value,
+                )
+            )
+
+        return [
+            DailyMetricSeries(metric_type=metric_type, points=points)
+            for metric_type, points in sorted(
+                grouped_points.items(),
+                key=lambda item: item[0].lower(),
+            )
+            if points
+        ]
+
+    async def _get_latest_daily_metric_date(
+        self,
+        subject: str,
+        fallback_date: date,
+    ) -> date | None:
+        """Return the latest dynamic metric date up to a fallback date.
+
+        Parameters:
+            subject: Stable subject configured for the portal.
+            fallback_date: Latest date allowed for default-day selection.
+
+        Returns:
+            date | None: Latest daily metric date, or `None` when unavailable.
+
+        Raises:
+            Exception: Propagated from asyncpg when the query fails.
+        """
+
+        if not await self._table_has_column("daily_metrics", "metric_date"):
+            return None
+
+        row = await self._fetchrow(
+            """
+            SELECT MAX(metric_date) AS default_day
+            FROM public.daily_metrics
+            WHERE subject = $1 AND metric_date <= $2
+            """,
+            subject,
+            fallback_date,
+        )
+        return row["default_day"] if row and row["default_day"] else None
+
     async def _fetchrow(self, query: str, *args: object) -> asyncpg.Record | None:
         """Run one-row SQL after ensuring the pool exists.
 
@@ -1257,6 +1379,35 @@ class PostgresPortalStore(PortalStore):
                 )
 
             return self._schema_variant
+
+    async def _table_has_column(self, table_name: str, column_name: str) -> bool:
+        """Return whether a public table exposes a specific column.
+
+        Parameters:
+            table_name: Public table name to inspect.
+            column_name: Column name expected by a newer schema revision.
+
+        Returns:
+            bool: `True` when the column exists in `public.<table_name>`.
+
+        Raises:
+            Exception: Propagated from asyncpg when metadata lookup fails.
+        """
+
+        row = await self._fetchrow(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                    AND table_name = $1
+                    AND column_name = $2
+            ) AS has_column
+            """,
+            table_name,
+            column_name,
+        )
+        return bool(row and row["has_column"])
 
 
 def _extract_athlete_name(profile_markdown: str) -> str | None:

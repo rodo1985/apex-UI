@@ -21,6 +21,7 @@ export interface FoodProduct {
   carbs_g_per_100g: number;
   protein_g_per_100g: number;
   fat_g_per_100g: number;
+  usage_count: number;
 }
 
 export interface FoodProductsResponse {
@@ -129,10 +130,21 @@ export interface TrendSummary {
   total_activities: number;
 }
 
+export interface DailyMetricPoint {
+  date: string;
+  value: number;
+}
+
+export interface DailyMetricSeries {
+  metric_type: string;
+  points: DailyMetricPoint[];
+}
+
 export interface TrendsResponse {
   date_from: string;
   date_to: string;
   days: HistoryDay[];
+  daily_metrics: DailyMetricSeries[];
   summary: TrendSummary;
 }
 
