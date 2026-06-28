@@ -22,6 +22,15 @@ from apex_portal_api.models import (
     Meal,
     MealItem,
     PortalProfile,
+    TrainingPlanComparisonAdherence,
+    TrainingPlanComparisonDay,
+    TrainingPlanComparisonDeltas,
+    TrainingPlanComparisonResponse,
+    TrainingPlanComparisonTotals,
+    TrainingPlanDailyMetric,
+    TrainingPlanDay,
+    TrainingPlanDetail,
+    TrainingPlanSummary,
     TrendsResponse,
     TrendSummary,
 )
@@ -52,6 +61,32 @@ class PortalStore(ABC):
     @abstractmethod
     async def list_products(self, subject: str) -> list[FoodProduct]:
         """Return reusable food products for the current portal subject."""
+
+    @abstractmethod
+    async def list_training_plans(
+        self,
+        subject: str,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        status: str | None = None,
+    ) -> list[TrainingPlanSummary]:
+        """Return food and training plan headers for the current subject."""
+
+    @abstractmethod
+    async def get_training_plan(
+        self,
+        subject: str,
+        plan_id: int,
+    ) -> TrainingPlanDetail | None:
+        """Return one food and training plan with its planned days."""
+
+    @abstractmethod
+    async def compare_training_plan(
+        self,
+        subject: str,
+        plan_id: int,
+    ) -> TrainingPlanComparisonResponse | None:
+        """Compare one plan against actual logged data."""
 
     @abstractmethod
     async def get_daily_snapshot(
@@ -336,6 +371,209 @@ class PostgresPortalStore(PortalStore):
             )
             for row in rows
         ]
+
+    async def list_training_plans(
+        self,
+        subject: str,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        status: str | None = None,
+    ) -> list[TrainingPlanSummary]:
+        """Read food and training plan headers for the configured subject.
+
+        Parameters:
+            subject: Stable subject configured for the portal.
+            date_from: Optional inclusive lower date bound for overlapping plans.
+            date_to: Optional inclusive upper date bound for overlapping plans.
+            status: Optional lifecycle status filter.
+
+        Returns:
+            list[TrainingPlanSummary]: Plan headers ordered newest first.
+
+        Raises:
+            Exception: Propagated from asyncpg when the query fails.
+        """
+
+        if not await self._training_plan_tables_available():
+            return []
+
+        filters = ["p.subject = $1"]
+        args: list[object] = [subject]
+
+        if date_from is not None:
+            args.append(date_from)
+            filters.append(f"p.end_date >= ${len(args)}")
+
+        if date_to is not None:
+            args.append(date_to)
+            filters.append(f"p.start_date <= ${len(args)}")
+
+        if status is not None:
+            args.append(status)
+            filters.append(f"p.status = ${len(args)}")
+
+        rows = await self._fetch(
+            f"""
+            SELECT
+                p.id,
+                p.title,
+                p.start_date,
+                p.end_date,
+                p.status,
+                p.goal_markdown,
+                p.rationale_markdown,
+                p.notes_markdown,
+                p.generation_context,
+                p.created_at,
+                p.updated_at,
+                COUNT(d.id)::INTEGER AS days_count
+            FROM public.training_plans p
+            LEFT JOIN public.training_plan_days d
+                ON d.subject = p.subject AND d.plan_id = p.id
+            WHERE {' AND '.join(filters)}
+            GROUP BY p.id
+            ORDER BY p.start_date DESC, p.id DESC
+            """,
+            *args,
+        )
+        return [_training_plan_summary_from_row(row) for row in rows]
+
+    async def get_training_plan(
+        self,
+        subject: str,
+        plan_id: int,
+    ) -> TrainingPlanDetail | None:
+        """Read one food and training plan with its planned day rows.
+
+        Parameters:
+            subject: Stable subject configured for the portal.
+            plan_id: Plan identifier to load.
+
+        Returns:
+            TrainingPlanDetail | None: Plan detail when found.
+
+        Raises:
+            Exception: Propagated from asyncpg when the query fails.
+        """
+
+        if not await self._training_plan_tables_available():
+            return None
+
+        plan_row = await self._fetchrow(
+            """
+            SELECT
+                p.id,
+                p.title,
+                p.start_date,
+                p.end_date,
+                p.status,
+                p.goal_markdown,
+                p.rationale_markdown,
+                p.notes_markdown,
+                p.generation_context,
+                p.created_at,
+                p.updated_at,
+                COUNT(d.id)::INTEGER AS days_count
+            FROM public.training_plans p
+            LEFT JOIN public.training_plan_days d
+                ON d.subject = p.subject AND d.plan_id = p.id
+            WHERE p.subject = $1 AND p.id = $2
+            GROUP BY p.id
+            """,
+            subject,
+            plan_id,
+        )
+        if plan_row is None:
+            return None
+
+        day_rows = await self._fetch(
+            """
+            SELECT
+                id,
+                plan_id,
+                plan_date,
+                day_type,
+                title,
+                training_summary,
+                primary_sport_type,
+                planned_duration_seconds,
+                planned_distance_meters,
+                planned_elevation_gain_meters,
+                planned_training_load,
+                target_food_calories,
+                target_exercise_calories,
+                target_protein_g,
+                target_carbs_g,
+                target_fat_g,
+                training_sessions,
+                fueling_plan,
+                menu_plan,
+                notes_markdown,
+                created_at,
+                updated_at
+            FROM public.training_plan_days
+            WHERE subject = $1 AND plan_id = $2
+            ORDER BY plan_date ASC, id ASC
+            """,
+            subject,
+            plan_id,
+        )
+        return TrainingPlanDetail(
+            **_training_plan_summary_from_row(plan_row).model_dump(),
+            days=[_training_plan_day_from_row(row) for row in day_rows],
+        )
+
+    async def compare_training_plan(
+        self,
+        subject: str,
+        plan_id: int,
+    ) -> TrainingPlanComparisonResponse | None:
+        """Compare one plan's intended days with actual logged outcomes.
+
+        Parameters:
+            subject: Stable subject configured for the portal.
+            plan_id: Plan identifier to compare.
+
+        Returns:
+            TrainingPlanComparisonResponse | None: Comparison when the plan exists.
+
+        Raises:
+            Exception: Propagated from asyncpg when the query fails.
+        """
+
+        plan = await self.get_training_plan(subject, plan_id)
+        if plan is None:
+            return None
+
+        comparison_days: list[TrainingPlanComparisonDay] = []
+        totals = _empty_training_plan_comparison_totals()
+
+        for planned_day in plan.days:
+            actual = await self._get_daily_summary(subject, planned_day.plan_date)
+            daily_metrics = await self._get_daily_metrics_for_day(
+                subject,
+                planned_day.plan_date,
+            )
+            comparison = _build_training_plan_day_comparison(
+                planned_day,
+                actual,
+                daily_metrics,
+            )
+            _add_training_plan_comparison_totals(totals, comparison)
+            comparison_days.append(comparison)
+
+        plan_summary = TrainingPlanSummary(
+            **plan.model_dump(exclude={"days"}),
+        )
+        return TrainingPlanComparisonResponse(
+            plan=plan_summary,
+            days_count=len(comparison_days),
+            days=comparison_days,
+            totals=_finalize_training_plan_comparison_totals(
+                totals,
+                len(comparison_days),
+            ),
+        )
 
     async def get_daily_snapshot(
         self, subject: str, target_date: date
@@ -1169,6 +1407,59 @@ class PostgresPortalStore(PortalStore):
             if points
         ]
 
+    async def _get_daily_metrics_for_day(
+        self,
+        subject: str,
+        target_date: date,
+    ) -> list[TrainingPlanDailyMetric]:
+        """Read daily metrics attached to one comparison day.
+
+        Parameters:
+            subject: Stable subject configured for the portal.
+            target_date: Business date to inspect.
+
+        Returns:
+            list[TrainingPlanDailyMetric]: Metric rows ordered by metric type.
+
+        Raises:
+            Exception: Propagated from asyncpg when the query fails.
+        """
+
+        if not await self._table_has_column("daily_metrics", "metric_type"):
+            return []
+
+        rows = await self._fetch(
+            """
+            SELECT
+                metric_date,
+                metric_type,
+                AVG(value) AS value
+            FROM public.daily_metrics
+            WHERE subject = $1 AND metric_date = $2
+            GROUP BY metric_date, metric_type
+            ORDER BY LOWER(metric_type), metric_type
+            """,
+            subject,
+            target_date,
+        )
+
+        metrics: list[TrainingPlanDailyMetric] = []
+        for row in rows:
+            metric_type = str(row["metric_type"] or "").strip()
+            metric_value = _as_float(row["value"])
+            if not metric_type or metric_value is None:
+                continue
+
+            metrics.append(
+                TrainingPlanDailyMetric(
+                    metric_date=row["metric_date"],
+                    metric_type=metric_type,
+                    value=metric_value,
+                )
+            )
+
+        return metrics
+
     async def _get_latest_daily_metric_date(
         self,
         subject: str,
@@ -1200,6 +1491,24 @@ class PostgresPortalStore(PortalStore):
             fallback_date,
         )
         return row["default_day"] if row and row["default_day"] else None
+
+    async def _training_plan_tables_available(self) -> bool:
+        """Return whether the optional food and training plan tables exist.
+
+        Parameters:
+            None.
+
+        Returns:
+            bool: `True` when both plan tables are present.
+
+        Raises:
+            Exception: Propagated from asyncpg when metadata lookup fails.
+        """
+
+        return await self._table_has_column(
+            "training_plans",
+            "id",
+        ) and await self._table_has_column("training_plan_days", "id")
 
     async def _fetchrow(self, query: str, *args: object) -> asyncpg.Record | None:
         """Run one-row SQL after ensuring the pool exists.
@@ -1439,6 +1748,336 @@ def _extract_athlete_name(profile_markdown: str) -> str | None:
             return heading
 
     return None
+
+
+def _training_plan_summary_from_row(row: Any) -> TrainingPlanSummary:
+    """Map a database row into a plan summary model.
+
+    Parameters:
+        row: Database row containing plan header fields.
+
+    Returns:
+        TrainingPlanSummary: Typed plan summary.
+
+    Raises:
+        KeyError: Raised when required row fields are missing.
+    """
+
+    return TrainingPlanSummary(
+        id=int(row["id"]),
+        title=str(row["title"] or ""),
+        start_date=row["start_date"],
+        end_date=row["end_date"],
+        status=str(row["status"] or "draft"),
+        goal_markdown=str(row["goal_markdown"] or ""),
+        rationale_markdown=str(row["rationale_markdown"] or ""),
+        notes_markdown=str(row["notes_markdown"] or ""),
+        generation_context=_as_json_object(row["generation_context"]),
+        days_count=_as_int(row["days_count"]) or 0,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _training_plan_day_from_row(row: Any) -> TrainingPlanDay:
+    """Map a database row into a plan-day model.
+
+    Parameters:
+        row: Database row containing plan-day fields.
+
+    Returns:
+        TrainingPlanDay: Typed plan-day payload.
+
+    Raises:
+        KeyError: Raised when required row fields are missing.
+    """
+
+    return TrainingPlanDay(
+        id=int(row["id"]),
+        plan_id=int(row["plan_id"]),
+        plan_date=row["plan_date"],
+        day_type=str(row["day_type"] or "training"),
+        title=str(row["title"] or ""),
+        training_summary=str(row["training_summary"] or ""),
+        primary_sport_type=_as_optional_str(row["primary_sport_type"]),
+        planned_duration_seconds=_as_int(row["planned_duration_seconds"]),
+        planned_distance_meters=_as_float(row["planned_distance_meters"]),
+        planned_elevation_gain_meters=_as_float(
+            row["planned_elevation_gain_meters"]
+        ),
+        planned_training_load=_as_float(row["planned_training_load"]),
+        target_food_calories=_as_float(row["target_food_calories"]) or 0,
+        target_exercise_calories=_as_float(row["target_exercise_calories"]) or 0,
+        target_protein_g=_as_float(row["target_protein_g"]) or 0,
+        target_carbs_g=_as_float(row["target_carbs_g"]) or 0,
+        target_fat_g=_as_float(row["target_fat_g"]) or 0,
+        training_sessions=_as_json_object_list(row["training_sessions"]),
+        fueling_plan=_as_json_object(row["fueling_plan"]),
+        menu_plan=_as_json_object(row["menu_plan"]),
+        notes_markdown=str(row["notes_markdown"] or ""),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _build_training_plan_day_comparison(
+    planned_day: TrainingPlanDay,
+    actual: DailySummary,
+    daily_metrics: list[TrainingPlanDailyMetric],
+) -> TrainingPlanComparisonDay:
+    """Compare one planned day with one actual daily summary.
+
+    Parameters:
+        planned_day: Stored food and training plan day.
+        actual: Computed daily actuals from existing logs.
+        daily_metrics: Wellness metric rows for the same day.
+
+    Returns:
+        TrainingPlanComparisonDay: Typed planned-vs-actual comparison row.
+
+    Raises:
+        This helper does not raise errors directly.
+    """
+
+    protein_adherence = _adherence_percent(
+        actual.actual_protein_g,
+        planned_day.target_protein_g,
+    )
+    carbs_adherence = _adherence_percent(
+        actual.actual_carbs_g,
+        planned_day.target_carbs_g,
+    )
+    fat_adherence = _adherence_percent(
+        actual.actual_fat_g,
+        planned_day.target_fat_g,
+    )
+    macro_scores = [
+        score
+        for score in (protein_adherence, carbs_adherence, fat_adherence)
+        if score is not None
+    ]
+
+    return TrainingPlanComparisonDay(
+        plan_date=planned_day.plan_date,
+        planned=planned_day,
+        actual=actual,
+        daily_metrics=daily_metrics,
+        deltas=TrainingPlanComparisonDeltas(
+            food_calories=round(
+                actual.actual_food_calories - planned_day.target_food_calories,
+                2,
+            ),
+            exercise_calories=round(
+                actual.actual_exercise_calories
+                - planned_day.target_exercise_calories,
+                2,
+            ),
+            protein_g=round(
+                actual.actual_protein_g - planned_day.target_protein_g,
+                2,
+            ),
+            carbs_g=round(actual.actual_carbs_g - planned_day.target_carbs_g, 2),
+            fat_g=round(actual.actual_fat_g - planned_day.target_fat_g, 2),
+        ),
+        adherence=TrainingPlanComparisonAdherence(
+            food_calories_percent=_adherence_percent(
+                actual.actual_food_calories,
+                planned_day.target_food_calories,
+            ),
+            exercise_calories_percent=_adherence_percent(
+                actual.actual_exercise_calories,
+                planned_day.target_exercise_calories,
+            ),
+            protein_percent=protein_adherence,
+            carbs_percent=carbs_adherence,
+            fat_percent=fat_adherence,
+            macro_average_percent=(
+                round(sum(macro_scores) / len(macro_scores), 1)
+                if macro_scores
+                else None
+            ),
+        ),
+    )
+
+
+def _adherence_percent(actual: float, planned: float) -> float | None:
+    """Return a simple target adherence score from 0 through 100.
+
+    Parameters:
+        actual: Actual logged value.
+        planned: Planned target value.
+
+    Returns:
+        float | None: Rounded adherence percent, or `None` for empty targets.
+
+    Raises:
+        This helper does not raise errors directly.
+    """
+
+    if planned <= 0:
+        return None
+    return round(max(0.0, 100.0 - abs(actual - planned) / planned * 100.0), 1)
+
+
+def _empty_training_plan_comparison_totals() -> dict[str, float]:
+    """Return accumulator fields for plan comparison totals.
+
+    Parameters:
+        None.
+
+    Returns:
+        dict[str, float]: Zeroed numeric accumulator.
+
+    Raises:
+        This helper does not raise errors directly.
+    """
+
+    return {
+        "planned_food_calories": 0.0,
+        "actual_food_calories": 0.0,
+        "planned_exercise_calories": 0.0,
+        "actual_exercise_calories": 0.0,
+        "planned_protein_g": 0.0,
+        "actual_protein_g": 0.0,
+        "planned_carbs_g": 0.0,
+        "actual_carbs_g": 0.0,
+        "planned_fat_g": 0.0,
+        "actual_fat_g": 0.0,
+    }
+
+
+def _add_training_plan_comparison_totals(
+    totals: dict[str, float],
+    comparison: TrainingPlanComparisonDay,
+) -> None:
+    """Add one day comparison to plan-level totals.
+
+    Parameters:
+        totals: Mutable accumulator returned by
+            `_empty_training_plan_comparison_totals`.
+        comparison: One compared plan day.
+
+    Returns:
+        None.
+
+    Raises:
+        This helper does not raise errors directly.
+    """
+
+    totals["planned_food_calories"] += comparison.planned.target_food_calories
+    totals["actual_food_calories"] += comparison.actual.actual_food_calories
+    totals["planned_exercise_calories"] += (
+        comparison.planned.target_exercise_calories
+    )
+    totals["actual_exercise_calories"] += (
+        comparison.actual.actual_exercise_calories
+    )
+    totals["planned_protein_g"] += comparison.planned.target_protein_g
+    totals["actual_protein_g"] += comparison.actual.actual_protein_g
+    totals["planned_carbs_g"] += comparison.planned.target_carbs_g
+    totals["actual_carbs_g"] += comparison.actual.actual_carbs_g
+    totals["planned_fat_g"] += comparison.planned.target_fat_g
+    totals["actual_fat_g"] += comparison.actual.actual_fat_g
+
+
+def _finalize_training_plan_comparison_totals(
+    totals: dict[str, float],
+    days_count: int,
+) -> TrainingPlanComparisonTotals:
+    """Return rounded totals and plan-level adherence fields.
+
+    Parameters:
+        totals: Accumulated numeric totals.
+        days_count: Number of compared days.
+
+    Returns:
+        TrainingPlanComparisonTotals: Typed aggregate comparison payload.
+
+    Raises:
+        This helper does not raise errors directly.
+    """
+
+    return TrainingPlanComparisonTotals(
+        planned_food_calories=round(totals["planned_food_calories"], 2),
+        actual_food_calories=round(totals["actual_food_calories"], 2),
+        planned_exercise_calories=round(
+            totals["planned_exercise_calories"],
+            2,
+        ),
+        actual_exercise_calories=round(totals["actual_exercise_calories"], 2),
+        planned_protein_g=round(totals["planned_protein_g"], 2),
+        actual_protein_g=round(totals["actual_protein_g"], 2),
+        planned_carbs_g=round(totals["planned_carbs_g"], 2),
+        actual_carbs_g=round(totals["actual_carbs_g"], 2),
+        planned_fat_g=round(totals["planned_fat_g"], 2),
+        actual_fat_g=round(totals["actual_fat_g"], 2),
+        food_calories_delta=round(
+            totals["actual_food_calories"] - totals["planned_food_calories"],
+            2,
+        ),
+        exercise_calories_delta=round(
+            totals["actual_exercise_calories"]
+            - totals["planned_exercise_calories"],
+            2,
+        ),
+        protein_g_delta=round(
+            totals["actual_protein_g"] - totals["planned_protein_g"],
+            2,
+        ),
+        carbs_g_delta=round(
+            totals["actual_carbs_g"] - totals["planned_carbs_g"],
+            2,
+        ),
+        fat_g_delta=round(
+            totals["actual_fat_g"] - totals["planned_fat_g"],
+            2,
+        ),
+        food_calories_adherence_percent=_adherence_percent(
+            totals["actual_food_calories"],
+            totals["planned_food_calories"],
+        ),
+        exercise_calories_adherence_percent=_adherence_percent(
+            totals["actual_exercise_calories"],
+            totals["planned_exercise_calories"],
+        ),
+        days_count=days_count,
+    )
+
+
+def _as_json_object(value: object | None) -> dict[str, Any]:
+    """Return a JSON object when the database value has object shape.
+
+    Parameters:
+        value: Raw JSONB-compatible database value.
+
+    Returns:
+        dict[str, Any]: JSON object, or an empty object for other shapes.
+
+    Raises:
+        This helper does not raise errors directly.
+    """
+
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _as_json_object_list(value: object | None) -> list[dict[str, Any]]:
+    """Return a list of JSON objects from a raw JSONB-compatible value.
+
+    Parameters:
+        value: Raw JSONB-compatible database value.
+
+    Returns:
+        list[dict[str, Any]]: List containing only object-shaped entries.
+
+    Raises:
+        This helper does not raise errors directly.
+    """
+
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _nullable_float(row: Any, key: str) -> float | None:

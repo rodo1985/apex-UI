@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -385,6 +386,302 @@ class DailyMetricSeries(BaseModel):
 
     metric_type: str
     points: list[DailyMetricPoint] = Field(default_factory=list)
+
+
+class TrainingPlanSummary(BaseModel):
+    """Describe one food and training plan header for list views.
+
+    Parameters:
+        id: Plan identifier.
+        title: Human-readable plan title.
+        start_date: First date included in the plan.
+        end_date: Last date included in the plan.
+        status: Lifecycle status such as draft, approved, published, archived.
+        goal_markdown: Goal statement that guided the plan.
+        rationale_markdown: AI rationale and assumptions.
+        notes_markdown: Freeform plan notes.
+        generation_context: Structured context used by the plan creator.
+        days_count: Number of stored plan-day rows.
+        created_at: Creation timestamp.
+        updated_at: Last update timestamp.
+
+    Returns:
+        TrainingPlanSummary: Serializable plan header for the portal.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    id: int
+    title: str
+    start_date: date
+    end_date: date
+    status: str
+    goal_markdown: str = ""
+    rationale_markdown: str = ""
+    notes_markdown: str = ""
+    generation_context: dict[str, Any] = Field(default_factory=dict)
+    days_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class TrainingPlanDay(BaseModel):
+    """Describe one planned food and training day.
+
+    Parameters:
+        id: Plan-day identifier.
+        plan_id: Parent plan identifier.
+        plan_date: Calendar day represented by the row.
+        day_type: Day type such as training, rest, recovery, race, or travel.
+        title: Human-readable day title.
+        training_summary: Short planned-training description.
+        primary_sport_type: Optional sport label.
+        planned_duration_seconds: Optional planned workout duration.
+        planned_distance_meters: Optional planned distance.
+        planned_elevation_gain_meters: Optional planned elevation gain.
+        planned_training_load: Optional planned training stress/load.
+        target_food_calories: Planned food calories.
+        target_exercise_calories: Planned exercise calories.
+        target_protein_g: Planned protein grams.
+        target_carbs_g: Planned carbohydrate grams.
+        target_fat_g: Planned fat grams.
+        training_sessions: Structured planned workout sessions.
+        fueling_plan: Structured workout fueling guidance.
+        menu_plan: Structured meal/menu guidance.
+        notes_markdown: Freeform day notes.
+        created_at: Creation timestamp.
+        updated_at: Last update timestamp.
+
+    Returns:
+        TrainingPlanDay: Serializable plan-day row for the portal.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    id: int
+    plan_id: int
+    plan_date: date
+    day_type: str
+    title: str = ""
+    training_summary: str = ""
+    primary_sport_type: str | None = None
+    planned_duration_seconds: int | None = None
+    planned_distance_meters: float | None = None
+    planned_elevation_gain_meters: float | None = None
+    planned_training_load: float | None = None
+    target_food_calories: float
+    target_exercise_calories: float
+    target_protein_g: float
+    target_carbs_g: float
+    target_fat_g: float
+    training_sessions: list[dict[str, Any]] = Field(default_factory=list)
+    fueling_plan: dict[str, Any] = Field(default_factory=dict)
+    menu_plan: dict[str, Any] = Field(default_factory=dict)
+    notes_markdown: str = ""
+    created_at: datetime
+    updated_at: datetime
+
+
+class TrainingPlanDetail(TrainingPlanSummary):
+    """Represent one plan header plus its ordered day rows.
+
+    Parameters:
+        days: Plan days ordered by `plan_date`.
+
+    Returns:
+        TrainingPlanDetail: Full plan detail payload for the portal.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    days: list[TrainingPlanDay] = Field(default_factory=list)
+
+
+class TrainingPlanDailyMetric(BaseModel):
+    """Describe one wellness metric attached to a plan comparison day.
+
+    Parameters:
+        metric_date: Date represented by the metric.
+        metric_type: Metric name from `daily_metrics.metric_type`.
+        value: Numeric metric value.
+
+    Returns:
+        TrainingPlanDailyMetric: Serializable daily wellness metric row.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    metric_date: date
+    metric_type: str
+    value: float
+
+
+class TrainingPlanComparisonDeltas(BaseModel):
+    """Represent actual-minus-planned differences for one plan day.
+
+    Parameters:
+        food_calories: Food calorie delta.
+        exercise_calories: Exercise calorie delta.
+        protein_g: Protein gram delta.
+        carbs_g: Carbohydrate gram delta.
+        fat_g: Fat gram delta.
+
+    Returns:
+        TrainingPlanComparisonDeltas: Serializable delta values.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    food_calories: float
+    exercise_calories: float
+    protein_g: float
+    carbs_g: float
+    fat_g: float
+
+
+class TrainingPlanComparisonAdherence(BaseModel):
+    """Represent adherence percentages for one plan day.
+
+    Parameters:
+        food_calories_percent: Food calorie adherence.
+        exercise_calories_percent: Exercise calorie adherence.
+        protein_percent: Protein adherence.
+        carbs_percent: Carbohydrate adherence.
+        fat_percent: Fat adherence.
+        macro_average_percent: Average of available macro adherence values.
+
+    Returns:
+        TrainingPlanComparisonAdherence: Serializable adherence values.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    food_calories_percent: float | None = None
+    exercise_calories_percent: float | None = None
+    protein_percent: float | None = None
+    carbs_percent: float | None = None
+    fat_percent: float | None = None
+    macro_average_percent: float | None = None
+
+
+class TrainingPlanComparisonDay(BaseModel):
+    """Combine planned, actual, delta, adherence, and wellness context.
+
+    Parameters:
+        plan_date: Calendar date being compared.
+        planned: Stored plan day.
+        actual: Actual daily summary from existing logs.
+        daily_metrics: Wellness metrics recorded for the same date.
+        deltas: Actual-minus-planned values.
+        adherence: Target adherence percentages.
+
+    Returns:
+        TrainingPlanComparisonDay: Serializable planned-vs-actual day row.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    plan_date: date
+    planned: TrainingPlanDay
+    actual: DailySummary
+    daily_metrics: list[TrainingPlanDailyMetric] = Field(default_factory=list)
+    deltas: TrainingPlanComparisonDeltas
+    adherence: TrainingPlanComparisonAdherence
+
+
+class TrainingPlanComparisonTotals(BaseModel):
+    """Represent plan-level totals and adherence for compared days.
+
+    Parameters:
+        planned_food_calories: Total planned food calories.
+        actual_food_calories: Total actual food calories.
+        planned_exercise_calories: Total planned exercise calories.
+        actual_exercise_calories: Total actual exercise calories.
+        planned_protein_g: Total planned protein grams.
+        actual_protein_g: Total actual protein grams.
+        planned_carbs_g: Total planned carbohydrate grams.
+        actual_carbs_g: Total actual carbohydrate grams.
+        planned_fat_g: Total planned fat grams.
+        actual_fat_g: Total actual fat grams.
+        food_calories_delta: Total food calorie delta.
+        exercise_calories_delta: Total exercise calorie delta.
+        protein_g_delta: Total protein gram delta.
+        carbs_g_delta: Total carbohydrate gram delta.
+        fat_g_delta: Total fat gram delta.
+        food_calories_adherence_percent: Food calorie adherence for totals.
+        exercise_calories_adherence_percent: Exercise adherence for totals.
+        days_count: Number of compared days.
+
+    Returns:
+        TrainingPlanComparisonTotals: Serializable aggregate comparison values.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    planned_food_calories: float = 0
+    actual_food_calories: float = 0
+    planned_exercise_calories: float = 0
+    actual_exercise_calories: float = 0
+    planned_protein_g: float = 0
+    actual_protein_g: float = 0
+    planned_carbs_g: float = 0
+    actual_carbs_g: float = 0
+    planned_fat_g: float = 0
+    actual_fat_g: float = 0
+    food_calories_delta: float = 0
+    exercise_calories_delta: float = 0
+    protein_g_delta: float = 0
+    carbs_g_delta: float = 0
+    fat_g_delta: float = 0
+    food_calories_adherence_percent: float | None = None
+    exercise_calories_adherence_percent: float | None = None
+    days_count: int = 0
+
+
+class TrainingPlansResponse(BaseModel):
+    """Represent the plan list returned by the backend.
+
+    Parameters:
+        items: Plan headers ordered newest first.
+
+    Returns:
+        TrainingPlansResponse: Serializable plan list.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    items: list[TrainingPlanSummary] = Field(default_factory=list)
+
+
+class TrainingPlanComparisonResponse(BaseModel):
+    """Represent a full planned-vs-actual comparison payload.
+
+    Parameters:
+        plan: Plan header being compared.
+        days_count: Number of compared day rows.
+        days: Per-day planned-vs-actual rows.
+        totals: Plan-level totals and adherence.
+
+    Returns:
+        TrainingPlanComparisonResponse: Serializable comparison response.
+
+    Raises:
+        This model does not raise errors directly.
+    """
+
+    plan: TrainingPlanSummary
+    days_count: int
+    days: list[TrainingPlanComparisonDay] = Field(default_factory=list)
+    totals: TrainingPlanComparisonTotals
 
 
 class TrendsResponse(BaseModel):

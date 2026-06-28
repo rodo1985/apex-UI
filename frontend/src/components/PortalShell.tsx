@@ -6,6 +6,7 @@ export type PortalView =
   | "today"
   | "trends"
   | "products"
+  | "plans"
   | "history"
   | "profile";
 
@@ -17,6 +18,7 @@ const NAV_ITEMS: Array<{
   { label: "Today", value: "today", icon: <TodayIcon /> },
   { label: "Trends", value: "trends", icon: <TrendsIcon /> },
   { label: "Food products", value: "products", icon: <FoodProductsIcon /> },
+  { label: "Plans", value: "plans", icon: <PlansIcon /> },
   { label: "History", value: "history", icon: <HistoryIcon /> },
   { label: "Profile", value: "profile", icon: <ProfileIcon /> },
 ];
@@ -289,6 +291,40 @@ function FoodProductsIcon() {
       <circle cx="4" cy="4.5" r="1" fill="currentColor" />
       <circle cx="4" cy="10" r="1" fill="currentColor" />
       <circle cx="4" cy="15.5" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+/**
+ * Render the plans navigation icon.
+ *
+ * Parameters:
+ *   None.
+ *
+ * Returns:
+ *   JSX.Element: Small calendar checklist icon for the sidebar.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function PlansIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none">
+      <rect
+        x="3.5"
+        y="4.5"
+        width="13"
+        height="12"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M6.5 3.5v3M13.5 3.5v3M3.8 8h12.4M7 11.5h.01M10 11.5h.01M13 11.5h.01M7 14h.01M10 14h.01"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }

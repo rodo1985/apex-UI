@@ -7,7 +7,7 @@ FastAPI backend that reads the same Supabase/Postgres data already used by the
 
 The goal is to keep the experience simple: open the portal, review the latest
 tracked day, inspect profile context and reusable foods, review past logs, and
-track how fuelling and training are evolving over time.
+track how fuelling, training, and plan adherence are evolving over time.
 
 ## Key Features / Scope
 
@@ -28,6 +28,9 @@ track how fuelling and training are evolving over time.
 - Shows evolution trends for food, exercise, macros, activity load, and dynamic
   `public.daily_metrics` series such as sleep, plus target-versus-achieved
   overlays where target data exists.
+- Shows read-only food and training plans from `public.training_plans` and
+  `public.training_plan_days`, including a plan list, calendar view, detail
+  view, and planned-vs-actual comparison.
 - Adds a collapsible desktop icon rail plus a mobile sidebar drawer for easier
   navigation across screen sizes.
 - Reuses the APEX visual language: dark workspace, teal brand accent, and APEX
@@ -43,11 +46,15 @@ track how fuelling and training are evolving over time.
   `public.daily_nutrition_targets`, `public.meal_logs`,
   `public.meal_ingredients`, `public.activities`). The optional
   `public.daily_metrics` table adds dynamic trend metrics grouped by
-  `metric_type`.
+  `metric_type`. Food and training plans use the subject-scoped
+  `public.training_plans` and `public.training_plan_days` tables added by the
+  MCP planning layer.
 
 ### Out Of Scope
 
 - Writing or editing meals, targets, or activities
+- Creating, editing, approving, publishing, or archiving food and training plans
+- Publishing planned workouts to Intervals.icu
 - Multi-user account management
 - Full MCP/OAuth login inside the portal
 - Rebuilding the original APEX coaching workspace

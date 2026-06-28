@@ -3,9 +3,86 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import UTC, date, datetime
 
+from apex_portal_api.models import (
+    DailySummary,
+    TrainingPlanDailyMetric,
+    TrainingPlanDay,
+    TrainingPlanDetail,
+    TrainingPlanSummary,
+)
 from apex_portal_api.store import PostgresPortalStore
+
+
+def build_plan_row(days_count: int = 1) -> dict[str, object]:
+    """Build a fake training plan row for store mapping tests.
+
+    Parameters:
+        days_count: Number of planned days to expose in the row.
+
+    Returns:
+        dict[str, object]: Database-shaped training plan row.
+
+    Raises:
+        This helper does not raise errors directly.
+    """
+
+    timestamp = datetime(2026, 6, 28, 18, 0, tzinfo=UTC)
+    return {
+        "id": 1,
+        "title": "Next week endurance block",
+        "start_date": date(2026, 7, 6),
+        "end_date": date(2026, 7, 12),
+        "status": "published",
+        "goal_markdown": "Lose weight while keeping long-run quality.",
+        "rationale_markdown": "Estimated from similar long runs.",
+        "notes_markdown": "Use conservative load estimates.",
+        "generation_context": {"source": "pytest"},
+        "days_count": days_count,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+
+
+def build_plan_day_row() -> dict[str, object]:
+    """Build a fake training-plan day row for store mapping tests.
+
+    Parameters:
+        None.
+
+    Returns:
+        dict[str, object]: Database-shaped training-plan day row.
+
+    Raises:
+        This helper does not raise errors directly.
+    """
+
+    timestamp = datetime(2026, 6, 28, 18, 0, tzinfo=UTC)
+    return {
+        "id": 10,
+        "plan_id": 1,
+        "plan_date": date(2026, 7, 6),
+        "day_type": "training",
+        "title": "Long aerobic run",
+        "training_summary": "2 hour easy run with steady fueling.",
+        "primary_sport_type": "run",
+        "planned_duration_seconds": 7200,
+        "planned_distance_meters": 20000.0,
+        "planned_elevation_gain_meters": 250.0,
+        "planned_training_load": 120.0,
+        "target_food_calories": 2800.0,
+        "target_exercise_calories": 1200.0,
+        "target_protein_g": 150.0,
+        "target_carbs_g": 360.0,
+        "target_fat_g": 75.0,
+        "training_sessions": [{"sport_type": "run", "duration_seconds": 7200}],
+        "fueling_plan": {"during": "60 g carbs/hour"},
+        "menu_plan": {"breakfast": "oats and banana"},
+        "notes_markdown": "Use conservative load estimate.",
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
 
 
 def test_list_products_maps_food_product_rows() -> None:
@@ -430,3 +507,160 @@ def test_legacy_list_products_uses_subject_scoped_table() -> None:
     assert products[0].id == "7"
     assert products[0].name == "Legacy yogurt"
     assert products[0].usage_count == 8
+
+
+def test_list_training_plans_maps_days_count_and_filters() -> None:
+    """Ensure plan list rows map into typed summaries with filters."""
+
+    store = PostgresPortalStore("postgresql://example")
+
+    async def fake_fetch(query: str, *args: object) -> list[dict[str, object]]:
+        """Return deterministic training plan rows for the mapping test."""
+
+        assert "FROM public.training_plans p" in query
+        assert "COUNT(d.id)::INTEGER AS days_count" in query
+        assert args == (
+            "athlete-1",
+            date(2026, 7, 1),
+            date(2026, 7, 31),
+            "published",
+        )
+        return [build_plan_row(days_count=7)]
+
+    store._fetch = fake_fetch  # type: ignore[method-assign]
+    store._training_plan_tables_available = (  # type: ignore[method-assign]
+        lambda: asyncio.sleep(0, result=True)
+    )
+
+    plans = asyncio.run(
+        store.list_training_plans(
+            "athlete-1",
+            date_from=date(2026, 7, 1),
+            date_to=date(2026, 7, 31),
+            status="published",
+        )
+    )
+
+    assert len(plans) == 1
+    assert plans[0].title == "Next week endurance block"
+    assert plans[0].days_count == 7
+    assert plans[0].generation_context["source"] == "pytest"
+
+
+def test_get_training_plan_maps_child_days_and_json_fields() -> None:
+    """Ensure plan detail rows include ordered planned days and JSON fields."""
+
+    store = PostgresPortalStore("postgresql://example")
+
+    async def fake_fetchrow(query: str, *args: object) -> dict[str, object]:
+        """Return one deterministic plan header row."""
+
+        assert "FROM public.training_plans p" in query
+        assert args == ("athlete-1", 1)
+        return build_plan_row(days_count=1)
+
+    async def fake_fetch(query: str, *args: object) -> list[dict[str, object]]:
+        """Return one deterministic plan day row."""
+
+        assert "FROM public.training_plan_days" in query
+        assert args == ("athlete-1", 1)
+        return [build_plan_day_row()]
+
+    store._fetchrow = fake_fetchrow  # type: ignore[method-assign]
+    store._fetch = fake_fetch  # type: ignore[method-assign]
+    store._training_plan_tables_available = (  # type: ignore[method-assign]
+        lambda: asyncio.sleep(0, result=True)
+    )
+
+    plan = asyncio.run(store.get_training_plan("athlete-1", 1))
+
+    assert plan is not None
+    assert plan.days_count == 1
+    assert plan.days[0].training_sessions[0]["duration_seconds"] == 7200
+    assert plan.days[0].fueling_plan["during"] == "60 g carbs/hour"
+    assert plan.days[0].menu_plan["breakfast"] == "oats and banana"
+
+
+def test_compare_training_plan_computes_deltas_totals_and_metrics() -> None:
+    """Ensure comparison math matches the MCP planned-vs-actual semantics."""
+
+    store = PostgresPortalStore("postgresql://example")
+    plan_day = TrainingPlanDay(**build_plan_day_row())
+    plan = TrainingPlanDetail(
+        **TrainingPlanSummary(**build_plan_row(days_count=1)).model_dump(),
+        days=[plan_day],
+    )
+
+    async def fake_get_training_plan(
+        subject: str,
+        plan_id: int,
+    ) -> TrainingPlanDetail:
+        """Return one deterministic plan detail."""
+
+        assert subject == "athlete-1"
+        assert plan_id == 1
+        return plan
+
+    async def fake_get_daily_summary(
+        subject: str,
+        target_date: date,
+    ) -> DailySummary:
+        """Return deterministic actuals for one comparison day."""
+
+        assert subject == "athlete-1"
+        assert target_date == date(2026, 7, 6)
+        return DailySummary(
+            target_date=target_date,
+            target_food_calories=2800.0,
+            target_exercise_calories=1200.0,
+            target_protein_g=150.0,
+            target_carbs_g=360.0,
+            target_fat_g=75.0,
+            actual_food_calories=2600.0,
+            actual_exercise_calories=1100.0,
+            actual_protein_g=145.0,
+            actual_carbs_g=330.0,
+            actual_fat_g=80.0,
+            remaining_food_calories=200.0,
+            remaining_protein_g=5.0,
+            remaining_carbs_g=30.0,
+            remaining_fat_g=-5.0,
+            net_calories=1500.0,
+            meals_count=1,
+            meal_items_count=1,
+            activities_count=1,
+        )
+
+    async def fake_get_daily_metrics_for_day(
+        subject: str,
+        target_date: date,
+    ) -> list[TrainingPlanDailyMetric]:
+        """Return deterministic wellness metric context."""
+
+        assert subject == "athlete-1"
+        assert target_date == date(2026, 7, 6)
+        return [
+            TrainingPlanDailyMetric(
+                metric_date=target_date,
+                metric_type="sleep_hours",
+                value=7.5,
+            )
+        ]
+
+    store.get_training_plan = fake_get_training_plan  # type: ignore[method-assign]
+    store._get_daily_summary = fake_get_daily_summary  # type: ignore[method-assign]
+    store._get_daily_metrics_for_day = (  # type: ignore[method-assign]
+        fake_get_daily_metrics_for_day
+    )
+
+    comparison = asyncio.run(store.compare_training_plan("athlete-1", 1))
+
+    assert comparison is not None
+    assert comparison.days_count == 1
+    assert comparison.days[0].deltas.food_calories == -200.0
+    assert comparison.days[0].deltas.exercise_calories == -100.0
+    assert comparison.days[0].deltas.carbs_g == -30.0
+    assert comparison.days[0].adherence.food_calories_percent == 92.9
+    assert comparison.days[0].daily_metrics[0].metric_type == "sleep_hours"
+    assert comparison.totals.food_calories_delta == -200.0
+    assert comparison.totals.exercise_calories_delta == -100.0

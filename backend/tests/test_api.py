@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 from fastapi.testclient import TestClient
 
@@ -22,6 +22,16 @@ from apex_portal_api.models import (
     Meal,
     MealItem,
     PortalProfile,
+    TrainingPlanComparisonAdherence,
+    TrainingPlanComparisonDay,
+    TrainingPlanComparisonDeltas,
+    TrainingPlanComparisonResponse,
+    TrainingPlanComparisonTotals,
+    TrainingPlanDailyMetric,
+    TrainingPlanDay,
+    TrainingPlanDetail,
+    TrainingPlansResponse,
+    TrainingPlanSummary,
     TrendsResponse,
     TrendSummary,
 )
@@ -141,6 +151,125 @@ class FakePortalStore(PortalStore):
             )
         ]
 
+    async def list_training_plans(
+        self,
+        subject: str,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        status: str | None = None,
+    ) -> list[TrainingPlanSummary]:
+        """Return a small deterministic training plan list for tests."""
+
+        plan = build_test_plan_summary()
+        if status is not None and plan.status != status:
+            return []
+        if date_from is not None and plan.end_date < date_from:
+            return []
+        if date_to is not None and plan.start_date > date_to:
+            return []
+        return [plan]
+
+    async def get_training_plan(
+        self,
+        subject: str,
+        plan_id: int,
+    ) -> TrainingPlanDetail | None:
+        """Return one deterministic training plan for tests."""
+
+        if plan_id != 1:
+            return None
+
+        return TrainingPlanDetail(
+            **build_test_plan_summary().model_dump(),
+            days=[build_test_plan_day()],
+        )
+
+    async def compare_training_plan(
+        self,
+        subject: str,
+        plan_id: int,
+    ) -> TrainingPlanComparisonResponse | None:
+        """Return one deterministic plan comparison for tests."""
+
+        if plan_id != 1:
+            return None
+
+        planned = build_test_plan_day()
+        actual = DailySummary(
+            target_date=planned.plan_date,
+            target_food_calories=2800,
+            target_exercise_calories=1200,
+            target_protein_g=150,
+            target_carbs_g=360,
+            target_fat_g=75,
+            actual_food_calories=2600,
+            actual_exercise_calories=1100,
+            actual_protein_g=145,
+            actual_carbs_g=330,
+            actual_fat_g=80,
+            remaining_food_calories=200,
+            remaining_protein_g=5,
+            remaining_carbs_g=30,
+            remaining_fat_g=-5,
+            net_calories=1500,
+            meals_count=1,
+            meal_items_count=1,
+            activities_count=1,
+        )
+        return TrainingPlanComparisonResponse(
+            plan=build_test_plan_summary(),
+            days_count=1,
+            days=[
+                TrainingPlanComparisonDay(
+                    plan_date=planned.plan_date,
+                    planned=planned,
+                    actual=actual,
+                    daily_metrics=[
+                        TrainingPlanDailyMetric(
+                            metric_date=planned.plan_date,
+                            metric_type="sleep_hours",
+                            value=7.5,
+                        )
+                    ],
+                    deltas=TrainingPlanComparisonDeltas(
+                        food_calories=-200,
+                        exercise_calories=-100,
+                        protein_g=-5,
+                        carbs_g=-30,
+                        fat_g=5,
+                    ),
+                    adherence=TrainingPlanComparisonAdherence(
+                        food_calories_percent=92.9,
+                        exercise_calories_percent=91.7,
+                        protein_percent=96.7,
+                        carbs_percent=91.7,
+                        fat_percent=93.3,
+                        macro_average_percent=93.9,
+                    ),
+                )
+            ],
+            totals=TrainingPlanComparisonTotals(
+                planned_food_calories=2800,
+                actual_food_calories=2600,
+                planned_exercise_calories=1200,
+                actual_exercise_calories=1100,
+                planned_protein_g=150,
+                actual_protein_g=145,
+                planned_carbs_g=360,
+                actual_carbs_g=330,
+                planned_fat_g=75,
+                actual_fat_g=80,
+                food_calories_delta=-200,
+                exercise_calories_delta=-100,
+                protein_g_delta=-5,
+                carbs_g_delta=-30,
+                fat_g_delta=5,
+                food_calories_adherence_percent=92.9,
+                exercise_calories_adherence_percent=91.7,
+                days_count=1,
+            ),
+        )
+
     async def get_history(
         self,
         subject: str,
@@ -232,6 +361,78 @@ class FakePortalStore(PortalStore):
         return None
 
 
+def build_test_plan_summary() -> TrainingPlanSummary:
+    """Build a deterministic food and training plan header for tests.
+
+    Parameters:
+        None.
+
+    Returns:
+        TrainingPlanSummary: Fixed plan summary payload.
+
+    Raises:
+        This helper does not raise errors directly.
+    """
+
+    timestamp = datetime(2026, 6, 28, 18, 0, tzinfo=UTC)
+    return TrainingPlanSummary(
+        id=1,
+        title="Next week endurance block",
+        start_date=date(2026, 7, 6),
+        end_date=date(2026, 7, 12),
+        status="published",
+        goal_markdown="Lose weight while keeping long-run quality.",
+        rationale_markdown="Estimated from similar long runs.",
+        notes_markdown="Use conservative load estimates.",
+        generation_context={"source": "pytest"},
+        days_count=1,
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+
+
+def build_test_plan_day() -> TrainingPlanDay:
+    """Build a deterministic training-plan day for tests.
+
+    Parameters:
+        None.
+
+    Returns:
+        TrainingPlanDay: Fixed planned day payload.
+
+    Raises:
+        This helper does not raise errors directly.
+    """
+
+    timestamp = datetime(2026, 6, 28, 18, 0, tzinfo=UTC)
+    return TrainingPlanDay(
+        id=10,
+        plan_id=1,
+        plan_date=date(2026, 7, 6),
+        day_type="training",
+        title="Long aerobic run",
+        training_summary="2 hour easy run with steady fueling.",
+        primary_sport_type="run",
+        planned_duration_seconds=7200,
+        planned_distance_meters=20000,
+        planned_elevation_gain_meters=250,
+        planned_training_load=120,
+        target_food_calories=2800,
+        target_exercise_calories=1200,
+        target_protein_g=150,
+        target_carbs_g=360,
+        target_fat_g=75,
+        training_sessions=[
+            {"sport_type": "run", "duration_seconds": 7200, "intensity": "easy"}
+        ],
+        fueling_plan={"during": "60 g carbs/hour"},
+        menu_plan={"breakfast": "oats and banana"},
+        notes_markdown="Use conservative load estimate.",
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+
+
 def build_test_client(portal_access_token: str | None = None) -> TestClient:
     """Create a configured FastAPI test client.
 
@@ -287,11 +488,18 @@ def test_protected_routes_require_bearer_token() -> None:
         "/portal/products",
         headers={"Authorization": "Bearer secret-token"},
     )
+    plans_unauthorized = client.get("/portal/plans")
+    plans_authorized = client.get(
+        "/portal/plans",
+        headers={"Authorization": "Bearer secret-token"},
+    )
 
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
     assert products_unauthorized.status_code == 401
     assert products_authorized.status_code == 200
+    assert plans_unauthorized.status_code == 401
+    assert plans_authorized.status_code == 200
 
 
 def test_history_route_uses_requested_window() -> None:
@@ -345,3 +553,59 @@ def test_products_route_returns_expected_shape() -> None:
     assert payload.items[0].name == "Rolled oats"
     assert payload.items[0].protein_g_per_100g == 13
     assert payload.items[0].usage_count == 22
+
+
+def test_plans_route_returns_expected_shape() -> None:
+    """Ensure the training plans route returns plan header rows."""
+
+    client = build_test_client()
+
+    response = client.get("/portal/plans?status=published")
+
+    assert response.status_code == 200
+    payload = TrainingPlansResponse.model_validate(response.json())
+    assert payload.items[0].title == "Next week endurance block"
+    assert payload.items[0].days_count == 1
+    assert payload.items[0].generation_context["source"] == "pytest"
+
+
+def test_plan_detail_route_returns_days() -> None:
+    """Ensure the plan detail route returns ordered planned days."""
+
+    client = build_test_client()
+
+    response = client.get("/portal/plans/1")
+
+    assert response.status_code == 200
+    payload = TrainingPlanDetail.model_validate(response.json())
+    assert payload.days[0].title == "Long aerobic run"
+    assert payload.days[0].training_sessions[0]["sport_type"] == "run"
+    assert payload.days[0].target_carbs_g == 360
+
+
+def test_plan_comparison_route_returns_deltas_and_metrics() -> None:
+    """Ensure the comparison route returns planned-vs-actual context."""
+
+    client = build_test_client()
+
+    response = client.get("/portal/plans/1/comparison")
+
+    assert response.status_code == 200
+    payload = TrainingPlanComparisonResponse.model_validate(response.json())
+    assert payload.days_count == 1
+    assert payload.days[0].deltas.food_calories == -200
+    assert payload.days[0].deltas.exercise_calories == -100
+    assert payload.days[0].daily_metrics[0].metric_type == "sleep_hours"
+    assert payload.totals.food_calories_adherence_percent == 92.9
+
+
+def test_missing_plan_routes_return_404() -> None:
+    """Ensure missing plan detail and comparison routes return 404."""
+
+    client = build_test_client()
+
+    detail = client.get("/portal/plans/999")
+    comparison = client.get("/portal/plans/999/comparison")
+
+    assert detail.status_code == 404
+    assert comparison.status_code == 404

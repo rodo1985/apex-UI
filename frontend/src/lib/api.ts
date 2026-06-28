@@ -140,6 +140,114 @@ export interface DailyMetricSeries {
   points: DailyMetricPoint[];
 }
 
+export interface TrainingPlanSummary {
+  id: number;
+  title: string;
+  start_date: string;
+  end_date: string;
+  status: string;
+  goal_markdown: string;
+  rationale_markdown: string;
+  notes_markdown: string;
+  generation_context: Record<string, unknown>;
+  days_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TrainingPlanDay {
+  id: number;
+  plan_id: number;
+  plan_date: string;
+  day_type: string;
+  title: string;
+  training_summary: string;
+  primary_sport_type: string | null;
+  planned_duration_seconds: number | null;
+  planned_distance_meters: number | null;
+  planned_elevation_gain_meters: number | null;
+  planned_training_load: number | null;
+  target_food_calories: number;
+  target_exercise_calories: number;
+  target_protein_g: number;
+  target_carbs_g: number;
+  target_fat_g: number;
+  training_sessions: Array<Record<string, unknown>>;
+  fueling_plan: Record<string, unknown>;
+  menu_plan: Record<string, unknown>;
+  notes_markdown: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TrainingPlanDetail extends TrainingPlanSummary {
+  days: TrainingPlanDay[];
+}
+
+export interface TrainingPlanDailyMetric {
+  metric_date: string;
+  metric_type: string;
+  value: number;
+}
+
+export interface TrainingPlanComparisonDeltas {
+  food_calories: number;
+  exercise_calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+}
+
+export interface TrainingPlanComparisonAdherence {
+  food_calories_percent: number | null;
+  exercise_calories_percent: number | null;
+  protein_percent: number | null;
+  carbs_percent: number | null;
+  fat_percent: number | null;
+  macro_average_percent: number | null;
+}
+
+export interface TrainingPlanComparisonDay {
+  plan_date: string;
+  planned: TrainingPlanDay;
+  actual: DailySummary;
+  daily_metrics: TrainingPlanDailyMetric[];
+  deltas: TrainingPlanComparisonDeltas;
+  adherence: TrainingPlanComparisonAdherence;
+}
+
+export interface TrainingPlanComparisonTotals {
+  planned_food_calories: number;
+  actual_food_calories: number;
+  planned_exercise_calories: number;
+  actual_exercise_calories: number;
+  planned_protein_g: number;
+  actual_protein_g: number;
+  planned_carbs_g: number;
+  actual_carbs_g: number;
+  planned_fat_g: number;
+  actual_fat_g: number;
+  food_calories_delta: number;
+  exercise_calories_delta: number;
+  protein_g_delta: number;
+  carbs_g_delta: number;
+  fat_g_delta: number;
+  food_calories_adherence_percent: number | null;
+  exercise_calories_adherence_percent: number | null;
+  days_count: number;
+}
+
+export interface TrainingPlansResponse {
+  items: TrainingPlanSummary[];
+}
+
+export interface TrainingPlanComparisonResponse {
+  plan: TrainingPlanSummary;
+  days_count: number;
+  days: TrainingPlanComparisonDay[];
+  totals: TrainingPlanComparisonTotals;
+}
+
 export interface TrendsResponse {
   date_from: string;
   date_to: string;
@@ -287,4 +395,68 @@ export async function getProducts(
   accessToken: string | null,
 ): Promise<FoodProductsResponse> {
   return requestJson<FoodProductsResponse>("/portal/products", accessToken);
+}
+
+/**
+ * Load food and training plan headers for the current portal subject.
+ *
+ * Parameters:
+ *   accessToken: Optional portal access token.
+ *
+ * Returns:
+ *   Promise<TrainingPlansResponse>: Plan headers ordered newest first.
+ *
+ * Raises:
+ *   Error: Raised when the backend request fails.
+ */
+export async function getPlans(
+  accessToken: string | null,
+): Promise<TrainingPlansResponse> {
+  return requestJson<TrainingPlansResponse>("/portal/plans", accessToken);
+}
+
+/**
+ * Load one food and training plan with its planned day rows.
+ *
+ * Parameters:
+ *   planId: Plan identifier to load.
+ *   accessToken: Optional portal access token.
+ *
+ * Returns:
+ *   Promise<TrainingPlanDetail>: Plan detail payload.
+ *
+ * Raises:
+ *   Error: Raised when the backend request fails.
+ */
+export async function getPlan(
+  planId: number,
+  accessToken: string | null,
+): Promise<TrainingPlanDetail> {
+  return requestJson<TrainingPlanDetail>(
+    `/portal/plans/${planId}`,
+    accessToken,
+  );
+}
+
+/**
+ * Load planned-vs-actual comparison data for one plan.
+ *
+ * Parameters:
+ *   planId: Plan identifier to compare.
+ *   accessToken: Optional portal access token.
+ *
+ * Returns:
+ *   Promise<TrainingPlanComparisonResponse>: Comparison rows and totals.
+ *
+ * Raises:
+ *   Error: Raised when the backend request fails.
+ */
+export async function getPlanComparison(
+  planId: number,
+  accessToken: string | null,
+): Promise<TrainingPlanComparisonResponse> {
+  return requestJson<TrainingPlanComparisonResponse>(
+    `/portal/plans/${planId}/comparison`,
+    accessToken,
+  );
 }

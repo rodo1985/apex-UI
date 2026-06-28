@@ -16,6 +16,9 @@ from apex_portal_api.models import (
     DailySnapshot,
     FoodProductsResponse,
     HistoryResponse,
+    TrainingPlanComparisonResponse,
+    TrainingPlanDetail,
+    TrainingPlansResponse,
     TrendsResponse,
 )
 from apex_portal_api.store import PortalStore, PostgresPortalStore, resolve_window
@@ -255,6 +258,113 @@ def create_app(
                 resolved_settings.portal_subject
             )
         )
+
+    @app.get("/portal/plans", response_model=TrainingPlansResponse)
+    async def get_plans(
+        date_from: date | None = Query(default=None),
+        date_to: date | None = Query(default=None),
+        plan_status: str | None = Query(
+            default=None,
+            alias="status",
+            pattern="^(draft|approved|published|archived)$",
+        ),
+        _: None = Depends(require_access),
+        store_dependency: PortalStore = Depends(current_store),
+    ) -> TrainingPlansResponse:
+        """Return food and training plan headers for the current subject.
+
+        Parameters:
+            date_from: Optional inclusive lower date bound for overlapping plans.
+            date_to: Optional inclusive upper date bound for overlapping plans.
+            plan_status: Optional lifecycle status filter.
+            _: Access-control dependency for the optional bearer token.
+            store_dependency: Store dependency injected by FastAPI.
+
+        Returns:
+            TrainingPlansResponse: Read-only plan header rows.
+
+        Raises:
+            HTTPException: Propagated by the access dependency when unauthorized.
+            Exception: Propagated by the backing store when queries fail.
+        """
+
+        return TrainingPlansResponse(
+            items=await store_dependency.list_training_plans(
+                resolved_settings.portal_subject,
+                date_from=date_from,
+                date_to=date_to,
+                status=plan_status,
+            )
+        )
+
+    @app.get("/portal/plans/{plan_id}", response_model=TrainingPlanDetail)
+    async def get_plan(
+        plan_id: int,
+        _: None = Depends(require_access),
+        store_dependency: PortalStore = Depends(current_store),
+    ) -> TrainingPlanDetail:
+        """Return one food and training plan with its planned days.
+
+        Parameters:
+            plan_id: Plan identifier to load.
+            _: Access-control dependency for the optional bearer token.
+            store_dependency: Store dependency injected by FastAPI.
+
+        Returns:
+            TrainingPlanDetail: Plan header and ordered plan-day rows.
+
+        Raises:
+            HTTPException: Raised when the plan is missing or unauthorized.
+            Exception: Propagated by the backing store when queries fail.
+        """
+
+        plan = await store_dependency.get_training_plan(
+            resolved_settings.portal_subject,
+            plan_id,
+        )
+        if plan is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Training plan not found.",
+            )
+
+        return plan
+
+    @app.get(
+        "/portal/plans/{plan_id}/comparison",
+        response_model=TrainingPlanComparisonResponse,
+    )
+    async def get_plan_comparison(
+        plan_id: int,
+        _: None = Depends(require_access),
+        store_dependency: PortalStore = Depends(current_store),
+    ) -> TrainingPlanComparisonResponse:
+        """Return a planned-vs-actual comparison for one training plan.
+
+        Parameters:
+            plan_id: Plan identifier to compare.
+            _: Access-control dependency for the optional bearer token.
+            store_dependency: Store dependency injected by FastAPI.
+
+        Returns:
+            TrainingPlanComparisonResponse: Comparison rows and totals.
+
+        Raises:
+            HTTPException: Raised when the plan is missing or unauthorized.
+            Exception: Propagated by the backing store when queries fail.
+        """
+
+        comparison = await store_dependency.compare_training_plan(
+            resolved_settings.portal_subject,
+            plan_id,
+        )
+        if comparison is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Training plan not found.",
+            )
+
+        return comparison
 
     @app.get("/portal/history", response_model=HistoryResponse)
     async def get_history(

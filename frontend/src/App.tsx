@@ -6,6 +6,9 @@ import { PortalShell, type PortalView } from "./components/PortalShell";
 import { TrendChart } from "./components/TrendChart";
 import {
   getBootstrap,
+  getPlan,
+  getPlanComparison,
+  getPlans,
   getProducts,
   type BootstrapResponse,
   type DailySnapshot,
@@ -14,12 +17,17 @@ import {
   type FoodProductsResponse,
   type HistoryDay,
   type PortalProfile,
+  type TrainingPlanComparisonResponse,
+  type TrainingPlanDay,
+  type TrainingPlanDetail,
+  type TrainingPlansResponse,
 } from "./lib/api";
 import {
   formatCalories,
   formatDistance,
   formatDuration,
   formatLongDate,
+  formatSignedValue,
   formatShortDate,
   shiftIsoDate,
   todayIsoDate,
@@ -61,6 +69,8 @@ type ProductsSortKey =
 type SortDirection = "asc" | "desc";
 type ViewStatus = "loading" | "ready" | "unlock" | "error";
 type ProductsStatus = "idle" | "loading" | "ready" | "error";
+type PlansStatus = "idle" | "loading" | "ready" | "error";
+type PlanPanel = "calendar" | "comparison";
 
 /**
  * Render the main APEX progress portal.
@@ -102,6 +112,22 @@ export default function App() {
     useState<ProductsStatus>("idle");
   const [productsErrorMessage, setProductsErrorMessage] = useState<string>("");
   const [productsReloadNonce, setProductsReloadNonce] = useState<number>(0);
+  const [plansData, setPlansData] = useState<TrainingPlansResponse | null>(
+    null,
+  );
+  const [plansStatus, setPlansStatus] = useState<PlansStatus>("idle");
+  const [plansErrorMessage, setPlansErrorMessage] = useState<string>("");
+  const [plansReloadNonce, setPlansReloadNonce] = useState<number>(0);
+  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
+  const [planDetail, setPlanDetail] = useState<TrainingPlanDetail | null>(null);
+  const [planComparison, setPlanComparison] =
+    useState<TrainingPlanComparisonResponse | null>(null);
+  const [selectedPlanStatus, setSelectedPlanStatus] =
+    useState<PlansStatus>("idle");
+  const [selectedPlanErrorMessage, setSelectedPlanErrorMessage] =
+    useState<string>("");
+  const [selectedPlanReloadNonce, setSelectedPlanReloadNonce] =
+    useState<number>(0);
 
   useEffect(() => {
     if (
@@ -211,6 +237,16 @@ export default function App() {
     setProductsStatus("idle");
     setProductsErrorMessage("");
     setProductsReloadNonce(0);
+    setPlansData(null);
+    setPlansStatus("idle");
+    setPlansErrorMessage("");
+    setPlansReloadNonce(0);
+    setSelectedPlanId(null);
+    setPlanDetail(null);
+    setPlanComparison(null);
+    setSelectedPlanStatus("idle");
+    setSelectedPlanErrorMessage("");
+    setSelectedPlanReloadNonce(0);
   }, [accessToken]);
 
   useEffect(() => {
@@ -271,6 +307,131 @@ export default function App() {
     };
   }, [accessToken, activeView, productsData, productsReloadNonce]);
 
+  useEffect(() => {
+    if (activeView !== "plans") {
+      return;
+    }
+
+    if (plansData !== null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadPlans() {
+      setPlansStatus("loading");
+      setPlansErrorMessage("");
+
+      try {
+        const nextPlans = await getPlans(accessToken);
+        if (cancelled) {
+          return;
+        }
+
+        setPlansData(nextPlans);
+        setPlansStatus("ready");
+        setSelectedPlanId((current) => current ?? nextPlans.items[0]?.id ?? null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        const maybeStatus =
+          typeof error === "object" && error !== null
+            ? Reflect.get(error, "status")
+            : undefined;
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unable to load the food and training plans.";
+
+        if (maybeStatus === 401) {
+          setPlansData(null);
+          setPlansStatus("idle");
+          setStatus("unlock");
+          setErrorMessage(message);
+          return;
+        }
+
+        setPlansData(null);
+        setPlansStatus("error");
+        setPlansErrorMessage(message);
+      }
+    }
+
+    void loadPlans();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, activeView, plansData, plansReloadNonce]);
+
+  useEffect(() => {
+    if (activeView !== "plans" || selectedPlanId === null) {
+      return;
+    }
+
+    const planId = selectedPlanId;
+    let cancelled = false;
+
+    async function loadSelectedPlan() {
+      setSelectedPlanStatus("loading");
+      setSelectedPlanErrorMessage("");
+
+      try {
+        const [nextPlan, nextComparison] = await Promise.all([
+          getPlan(planId, accessToken),
+          getPlanComparison(planId, accessToken),
+        ]);
+        if (cancelled) {
+          return;
+        }
+
+        setPlanDetail(nextPlan);
+        setPlanComparison(nextComparison);
+        setSelectedPlanStatus("ready");
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        const maybeStatus =
+          typeof error === "object" && error !== null
+            ? Reflect.get(error, "status")
+            : undefined;
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unable to load the selected plan.";
+
+        if (maybeStatus === 401) {
+          setPlanDetail(null);
+          setPlanComparison(null);
+          setSelectedPlanStatus("idle");
+          setStatus("unlock");
+          setErrorMessage(message);
+          return;
+        }
+
+        setPlanDetail(null);
+        setPlanComparison(null);
+        setSelectedPlanStatus("error");
+        setSelectedPlanErrorMessage(message);
+      }
+    }
+
+    void loadSelectedPlan();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    accessToken,
+    activeView,
+    selectedPlanId,
+    selectedPlanReloadNonce,
+  ]);
+
   const deferredTrendDays = useDeferredValue(portalData?.trends.days ?? []);
 
   if (status === "loading") {
@@ -323,6 +484,22 @@ export default function App() {
           errorMessage={productsErrorMessage}
           products={productsData?.items ?? []}
           onRetry={handleRetryProducts}
+        />
+      ) : null}
+
+      {activeView === "plans" ? (
+        <PlansView
+          plansStatus={plansStatus}
+          plansErrorMessage={plansErrorMessage}
+          plans={plansData?.items ?? []}
+          selectedPlanId={selectedPlanId}
+          selectedPlanStatus={selectedPlanStatus}
+          selectedPlanErrorMessage={selectedPlanErrorMessage}
+          planDetail={planDetail}
+          planComparison={planComparison}
+          onSelectPlan={handleSelectPlan}
+          onRetryPlans={handleRetryPlans}
+          onRetrySelectedPlan={handleRetrySelectedPlan}
         />
       ) : null}
 
@@ -444,6 +621,69 @@ export default function App() {
     setProductsStatus("idle");
     setProductsErrorMessage("");
     setProductsReloadNonce((current) => current + 1);
+  }
+
+  /**
+   * Reset the plans view so it can fetch again after an error.
+   *
+   * Parameters:
+   *   None.
+   *
+   * Returns:
+   *   void
+   *
+   * Raises:
+   *   This helper does not raise errors directly.
+   */
+  function handleRetryPlans() {
+    setPlansData(null);
+    setPlansStatus("idle");
+    setPlansErrorMessage("");
+    setPlansReloadNonce((current) => current + 1);
+  }
+
+  /**
+   * Reset the selected plan detail and comparison fetch after an error.
+   *
+   * Parameters:
+   *   None.
+   *
+   * Returns:
+   *   void
+   *
+   * Raises:
+   *   This helper does not raise errors directly.
+   */
+  function handleRetrySelectedPlan() {
+    setPlanDetail(null);
+    setPlanComparison(null);
+    setSelectedPlanStatus("idle");
+    setSelectedPlanErrorMessage("");
+    setSelectedPlanReloadNonce((current) => current + 1);
+  }
+
+  /**
+   * Select one plan from the plans list.
+   *
+   * Parameters:
+   *   planId: Plan identifier selected by the user.
+   *
+   * Returns:
+   *   void
+   *
+   * Raises:
+   *   This helper does not raise errors directly.
+   */
+  function handleSelectPlan(planId: number) {
+    if (planId === selectedPlanId) {
+      return;
+    }
+
+    setSelectedPlanId(planId);
+    setPlanDetail(null);
+    setPlanComparison(null);
+    setSelectedPlanStatus("idle");
+    setSelectedPlanErrorMessage("");
   }
 
   /**
@@ -986,6 +1226,661 @@ function FoodProductsView({
         ) : null}
       </div>
     </section>
+  );
+}
+
+/**
+ * Render the read-only food and training plans page.
+ *
+ * Parameters:
+ *   plansStatus: Async status for the plan list fetch.
+ *   plansErrorMessage: Error shown when plan list loading fails.
+ *   plans: Cached plan header rows.
+ *   selectedPlanId: Currently selected plan id.
+ *   selectedPlanStatus: Async status for selected plan detail/comparison.
+ *   selectedPlanErrorMessage: Error shown when selected plan loading fails.
+ *   planDetail: Current selected plan detail.
+ *   planComparison: Current selected plan comparison.
+ *   onSelectPlan: Callback used when the user selects a plan.
+ *   onRetryPlans: Callback used to retry the plan list.
+ *   onRetrySelectedPlan: Callback used to retry selected plan data.
+ *
+ * Returns:
+ *   JSX.Element: Plans list, calendar/detail, and comparison surface.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function PlansView({
+  plansStatus,
+  plansErrorMessage,
+  plans,
+  selectedPlanId,
+  selectedPlanStatus,
+  selectedPlanErrorMessage,
+  planDetail,
+  planComparison,
+  onSelectPlan,
+  onRetryPlans,
+  onRetrySelectedPlan,
+}: {
+  plansStatus: PlansStatus;
+  plansErrorMessage: string;
+  plans: TrainingPlansResponse["items"];
+  selectedPlanId: number | null;
+  selectedPlanStatus: PlansStatus;
+  selectedPlanErrorMessage: string;
+  planDetail: TrainingPlanDetail | null;
+  planComparison: TrainingPlanComparisonResponse | null;
+  onSelectPlan: (planId: number) => void;
+  onRetryPlans: () => void;
+  onRetrySelectedPlan: () => void;
+}) {
+  const [activePanel, setActivePanel] = useState<PlanPanel>("calendar");
+
+  return (
+    <section className="portal-section">
+      <div className="section-header-row">
+        <div>
+          <p className="section-kicker">Plans</p>
+          <h2>Food and training plans</h2>
+          <p className="section-copy">
+            Review planned training, nutrition targets, fueling guidance, and
+            actual outcomes from the APEX planning layer.
+          </p>
+        </div>
+      </div>
+
+      {plansStatus === "loading" || plansStatus === "idle" ? (
+        <EmptyPanel message="Loading food and training plans..." />
+      ) : null}
+
+      {plansStatus === "error" ? (
+        <div className="inline-error">
+          <p>{plansErrorMessage}</p>
+          <button type="button" onClick={onRetryPlans}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+
+      {plansStatus === "ready" && plans.length === 0 ? (
+        <EmptyPanel message="No food and training plans were found for this athlete." />
+      ) : null}
+
+      {plansStatus === "ready" && plans.length > 0 ? (
+        <div className="plans-layout">
+          <aside className="plans-list-panel" aria-label="Training plans">
+            <div className="plans-list-header">
+              <h3>Plan list</h3>
+              <span>{plans.length} stored</span>
+            </div>
+
+            <div className="plans-list">
+              {plans.map((plan) => (
+                <button
+                  key={plan.id}
+                  type="button"
+                  className={`plan-list-item${
+                    plan.id === selectedPlanId ? " active" : ""
+                  }`}
+                  onClick={() => onSelectPlan(plan.id)}
+                >
+                  <span className="plan-list-item-topline">
+                    <strong>{plan.title}</strong>
+                    <PlanStatusBadge status={plan.status} />
+                  </span>
+                  <span>{formatPlanDateRange(plan.start_date, plan.end_date)}</span>
+                  <span>
+                    {plan.days_count} {plan.days_count === 1 ? "day" : "days"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <div className="plans-detail-stack">
+            {selectedPlanStatus === "loading" ||
+            selectedPlanStatus === "idle" ? (
+              <EmptyPanel message="Loading selected plan..." />
+            ) : null}
+
+            {selectedPlanStatus === "error" ? (
+              <div className="inline-error">
+                <p>{selectedPlanErrorMessage}</p>
+                <button type="button" onClick={onRetrySelectedPlan}>
+                  Retry
+                </button>
+              </div>
+            ) : null}
+
+            {selectedPlanStatus === "ready" &&
+            planDetail !== null &&
+            planComparison !== null ? (
+              <>
+                <PlanOverview plan={planDetail} />
+
+                <div className="plan-panel-toggle" role="tablist">
+                  <button
+                    type="button"
+                    className={activePanel === "calendar" ? "active" : ""}
+                    onClick={() => setActivePanel("calendar")}
+                  >
+                    Calendar
+                  </button>
+                  <button
+                    type="button"
+                    className={activePanel === "comparison" ? "active" : ""}
+                    onClick={() => setActivePanel("comparison")}
+                  >
+                    Comparison
+                  </button>
+                </div>
+
+                {activePanel === "calendar" ? (
+                  <PlanCalendar plan={planDetail} />
+                ) : (
+                  <PlanComparisonPanel comparison={planComparison} />
+                )}
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * Render the selected plan header and explanatory markdown sections.
+ *
+ * Parameters:
+ *   plan: Selected plan detail payload.
+ *
+ * Returns:
+ *   JSX.Element: Plan summary and markdown context.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function PlanOverview({ plan }: { plan: TrainingPlanDetail }) {
+  return (
+    <>
+      <div className="plan-overview-panel">
+        <div>
+          <div className="plan-title-row">
+            <h3>{plan.title}</h3>
+            <PlanStatusBadge status={plan.status} />
+          </div>
+          <p>{formatPlanDateRange(plan.start_date, plan.end_date)}</p>
+        </div>
+
+        <div className="plan-overview-stats">
+          <ProfileStat
+            label="Planned days"
+            value={String(plan.days.length || plan.days_count)}
+          />
+          <ProfileStat
+            label="Updated"
+            value={formatShortDate(plan.updated_at.slice(0, 10))}
+          />
+        </div>
+      </div>
+
+      <div className="plan-markdown-grid">
+        <ProfileDocumentSection title="Goal" markdown={plan.goal_markdown} />
+        <ProfileDocumentSection
+          title="Rationale"
+          markdown={plan.rationale_markdown}
+        />
+        <ProfileDocumentSection title="Notes" markdown={plan.notes_markdown} />
+      </div>
+    </>
+  );
+}
+
+/**
+ * Render the selected plan as a 7-column calendar grid.
+ *
+ * Parameters:
+ *   plan: Selected plan detail payload.
+ *
+ * Returns:
+ *   JSX.Element: Calendar grid with one planned day card per date.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function PlanCalendar({ plan }: { plan: TrainingPlanDetail }) {
+  const daysByDate = new Map(plan.days.map((day) => [day.plan_date, day]));
+  const calendarCells = getPlanCalendarCells(plan.start_date, plan.end_date);
+
+  return (
+    <div className="plan-calendar-panel">
+      <div className="panel-header">
+        <h3>Plan calendar</h3>
+        <span>{plan.days.length} planned rows</span>
+      </div>
+
+      <div className="plan-calendar-weekdays" aria-hidden="true">
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((dayLabel) => (
+          <span key={dayLabel}>{dayLabel}</span>
+        ))}
+      </div>
+
+      <div className="plan-calendar-grid">
+        {calendarCells.map((cellDate, index) => {
+          if (cellDate === null) {
+            return <div key={`blank-${index}`} className="plan-calendar-empty" />;
+          }
+
+          const planDay = daysByDate.get(cellDate);
+          return (
+            <div key={cellDate} className="plan-calendar-cell">
+              <span className="plan-calendar-date">{formatShortDate(cellDate)}</span>
+              {planDay ? (
+                <PlanDayCard day={planDay} />
+              ) : (
+                <EmptyPanel message="No planned row for this date." />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Render one planned day as an expandable calendar card.
+ *
+ * Parameters:
+ *   day: Plan-day payload.
+ *
+ * Returns:
+ *   JSX.Element: Planned day card with training, targets, and guidance.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function PlanDayCard({ day }: { day: TrainingPlanDay }) {
+  return (
+    <details className={`plan-day-card ${day.day_type}`}>
+      <summary>
+        <span className="plan-day-card-kicker">
+          {day.day_type}
+          {day.primary_sport_type ? ` / ${day.primary_sport_type}` : ""}
+        </span>
+        <strong>{day.title || "Planned day"}</strong>
+        {day.training_summary ? <p>{day.training_summary}</p> : null}
+        <div className="plan-day-card-stats">
+          <span>{formatDuration(day.planned_duration_seconds)}</span>
+          <span>{formatDistance(day.planned_distance_meters)}</span>
+          <span>{formatCalories(day.target_food_calories)}</span>
+        </div>
+      </summary>
+
+      <div className="plan-day-card-body">
+        <div className="plan-target-grid">
+          <SummaryChip
+            tone="food"
+            label="Food"
+            value={formatCompactAmount(day.target_food_calories, "kcal")}
+          />
+          <SummaryChip
+            tone="exercise"
+            label="Exercise"
+            value={formatCompactAmount(day.target_exercise_calories, "kcal")}
+          />
+          <SummaryChip
+            tone="protein"
+            label="Protein"
+            value={formatCompactAmount(day.target_protein_g, "g")}
+          />
+          <SummaryChip
+            tone="carbs"
+            label="Carbs"
+            value={formatCompactAmount(day.target_carbs_g, "g")}
+          />
+          <SummaryChip
+            tone="fat"
+            label="Fat"
+            value={formatCompactAmount(day.target_fat_g, "g")}
+          />
+          {day.planned_training_load !== null ? (
+            <SummaryChip
+              tone="load"
+              label="Load"
+              value={Math.round(day.planned_training_load).toLocaleString()}
+            />
+          ) : null}
+        </div>
+
+        <PlanStructuredSection
+          title="Training sessions"
+          items={day.training_sessions}
+        />
+        <PlanJsonObject title="Fueling" value={day.fueling_plan} />
+        <PlanJsonObject title="Menu" value={day.menu_plan} />
+
+        {day.notes_markdown ? (
+          <div className="plan-day-notes">
+            <MarkdownContent markdown={day.notes_markdown} />
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+/**
+ * Render structured JSON list items from a plan day.
+ *
+ * Parameters:
+ *   title: Section title.
+ *   items: Structured list of JSON object entries.
+ *
+ * Returns:
+ *   JSX.Element | null: Rendered structured section when entries exist.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function PlanStructuredSection({
+  title,
+  items,
+}: {
+  title: string;
+  items: Array<Record<string, unknown>>;
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="plan-structured-section">
+      <h4>{title}</h4>
+      {items.map((item, index) => (
+        <dl key={index}>
+          <dt>Session {index + 1}</dt>
+          <dd>{formatJsonObject(item)}</dd>
+        </dl>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Render one object-shaped plan guidance block.
+ *
+ * Parameters:
+ *   title: Section title.
+ *   value: Object-shaped JSON value to render.
+ *
+ * Returns:
+ *   JSX.Element | null: Description list when the object has entries.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function PlanJsonObject({
+  title,
+  value,
+}: {
+  title: string;
+  value: Record<string, unknown>;
+}) {
+  const entries = Object.entries(value).filter(([, entryValue]) =>
+    hasDisplayValue(entryValue),
+  );
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="plan-structured-section">
+      <h4>{title}</h4>
+      <dl>
+        {entries.map(([key, entryValue]) => (
+          <div key={key}>
+            <dt>{formatMetricTypeLabel(key)}</dt>
+            <dd>{formatJsonValue(entryValue)}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+/**
+ * Render planned-vs-actual comparison totals and day rows.
+ *
+ * Parameters:
+ *   comparison: Selected plan comparison payload.
+ *
+ * Returns:
+ *   JSX.Element: Comparison panel with totals and per-day rows.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function PlanComparisonPanel({
+  comparison,
+}: {
+  comparison: TrainingPlanComparisonResponse;
+}) {
+  const totals = comparison.totals;
+
+  return (
+    <div className="plan-comparison-panel">
+      <div className="metric-grid">
+        <MetricCard
+          title="Food delta"
+          primary={formatSignedValue(totals.food_calories_delta, "kcal")}
+          secondary={`${formatCalories(totals.actual_food_calories)} actual / ${formatCalories(
+            totals.planned_food_calories,
+          )} planned`}
+        />
+        <MetricCard
+          title="Exercise delta"
+          primary={formatSignedValue(totals.exercise_calories_delta, "kcal")}
+          secondary={`${formatCalories(
+            totals.actual_exercise_calories,
+          )} actual / ${formatCalories(totals.planned_exercise_calories)} planned`}
+        />
+        <MetricCard
+          title="Macro delta"
+          primary={formatSignedValue(totals.carbs_g_delta, "g carbs")}
+          secondary={`${formatSignedValue(
+            totals.protein_g_delta,
+            "g protein",
+          )}, ${formatSignedValue(totals.fat_g_delta, "g fat")}`}
+        />
+        <MetricCard
+          title="Compared days"
+          primary={String(totals.days_count)}
+          secondary="Missing actuals are shown as missing data"
+        />
+      </div>
+
+      <div className="panel">
+        <div className="panel-header">
+          <h3>Planned vs actual</h3>
+          <span>{comparison.days_count} days compared</span>
+        </div>
+
+        <div className="plan-comparison-list">
+          {comparison.days.map((day) => (
+            <PlanComparisonRow key={day.plan_date} day={day} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Render one planned-vs-actual day row.
+ *
+ * Parameters:
+ *   day: One comparison day.
+ *
+ * Returns:
+ *   JSX.Element: Day-level comparison row.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function PlanComparisonRow({
+  day,
+}: {
+  day: TrainingPlanComparisonResponse["days"][number];
+}) {
+  const hasActuals =
+    day.actual.meals_count > 0 || day.actual.activities_count > 0;
+
+  return (
+    <article className={`plan-comparison-row${hasActuals ? "" : " missing"}`}>
+      <div className="plan-comparison-row-header">
+        <div>
+          <strong>{formatLongDate(day.plan_date)}</strong>
+          <span>{day.planned.title || day.planned.day_type}</span>
+        </div>
+        <span>{hasActuals ? "Actuals logged" : "Missing actuals"}</span>
+      </div>
+
+      <div className="plan-comparison-metrics">
+        <SummaryChip
+          tone="food"
+          label="Food"
+          value={`${formatCompactAmount(day.actual.actual_food_calories, "kcal")} / ${formatCompactAmount(
+            day.planned.target_food_calories,
+            "kcal",
+          )}`}
+        />
+        <SummaryChip
+          tone="exercise"
+          label="Exercise"
+          value={`${formatCompactAmount(
+            day.actual.actual_exercise_calories,
+            "kcal",
+          )} / ${formatCompactAmount(day.planned.target_exercise_calories, "kcal")}`}
+        />
+        <SummaryChip
+          tone="protein"
+          label="Protein"
+          value={`${formatCompactAmount(day.actual.actual_protein_g, "g")} / ${formatCompactAmount(
+            day.planned.target_protein_g,
+            "g",
+          )}`}
+        />
+        <SummaryChip
+          tone="carbs"
+          label="Carbs"
+          value={`${formatCompactAmount(day.actual.actual_carbs_g, "g")} / ${formatCompactAmount(
+            day.planned.target_carbs_g,
+            "g",
+          )}`}
+        />
+        <SummaryChip
+          tone="fat"
+          label="Fat"
+          value={`${formatCompactAmount(day.actual.actual_fat_g, "g")} / ${formatCompactAmount(
+            day.planned.target_fat_g,
+            "g",
+          )}`}
+        />
+      </div>
+
+      <div className="plan-comparison-deltas">
+        <span>Food {formatSignedValue(day.deltas.food_calories, "kcal")}</span>
+        <span>
+          Exercise {formatSignedValue(day.deltas.exercise_calories, "kcal")}
+        </span>
+        <span>Protein {formatSignedValue(day.deltas.protein_g, "g")}</span>
+        <span>Carbs {formatSignedValue(day.deltas.carbs_g, "g")}</span>
+        <span>Fat {formatSignedValue(day.deltas.fat_g, "g")}</span>
+      </div>
+
+      <div className="adherence-grid">
+        <AdherenceBar
+          label="Food adherence"
+          value={day.adherence.food_calories_percent}
+        />
+        <AdherenceBar
+          label="Exercise adherence"
+          value={day.adherence.exercise_calories_percent}
+        />
+        <AdherenceBar
+          label="Macro average"
+          value={day.adherence.macro_average_percent}
+        />
+      </div>
+
+      <div className="plan-comparison-context">
+        <span>{day.actual.meals_count} meals</span>
+        <span>{day.actual.activities_count} activities</span>
+        {day.daily_metrics.map((metric) => (
+          <span key={`${metric.metric_type}-${metric.metric_date}`}>
+            {formatMetricTypeLabel(metric.metric_type)}{" "}
+            {formatDailyMetricValue(metric.metric_type, metric.value)}
+          </span>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+/**
+ * Render one adherence bar.
+ *
+ * Parameters:
+ *   label: Bar label.
+ *   value: Optional adherence percentage.
+ *
+ * Returns:
+ *   JSX.Element: Small progress bar with numeric label.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function AdherenceBar({
+  label,
+  value,
+}: {
+  label: string;
+  value: number | null;
+}) {
+  return (
+    <div className="adherence-bar">
+      <div>
+        <span>{label}</span>
+        <strong>{value === null ? "No target" : `${Math.round(value)}%`}</strong>
+      </div>
+      <div className="adherence-track" aria-hidden="true">
+        <span style={{ width: `${value ?? 0}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Render one status badge for plan lifecycle state.
+ *
+ * Parameters:
+ *   status: Raw lifecycle status.
+ *
+ * Returns:
+ *   JSX.Element: Styled plan status label.
+ *
+ * Raises:
+ *   This component does not raise errors directly.
+ */
+function PlanStatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`plan-status-badge ${status}`}>
+      {formatMetricTypeLabel(status)}
+    </span>
   );
 }
 
@@ -2015,6 +2910,145 @@ function formatTrackedCounts(
   const mealLabel = mealsCount === 1 ? "meal" : "meals";
   const activityLabel = activitiesCount === 1 ? "activity" : "activities";
   return `${mealsCount} ${mealLabel} • ${activitiesCount} ${activityLabel}`;
+}
+
+/**
+ * Format the inclusive date range for a stored plan.
+ *
+ * Parameters:
+ *   startDate: First ISO date in the plan.
+ *   endDate: Last ISO date in the plan.
+ *
+ * Returns:
+ *   string: Readable date range label.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatPlanDateRange(startDate: string, endDate: string): string {
+  if (startDate === endDate) {
+    return formatLongDate(startDate);
+  }
+
+  return `${formatShortDate(startDate)} - ${formatShortDate(endDate)}`;
+}
+
+/**
+ * Build Monday-first calendar cells for one plan date range.
+ *
+ * Parameters:
+ *   startDate: First ISO date in the plan.
+ *   endDate: Last ISO date in the plan.
+ *
+ * Returns:
+ *   Array<string | null>: ISO dates plus leading blank cells.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function getPlanCalendarCells(startDate: string, endDate: string): Array<string | null> {
+  const cells: Array<string | null> = [];
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  const mondayFirstIndex = (start.getDay() + 6) % 7;
+
+  for (let index = 0; index < mondayFirstIndex; index += 1) {
+    cells.push(null);
+  }
+
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    const year = cursor.getFullYear();
+    const month = String(cursor.getMonth() + 1).padStart(2, "0");
+    const day = String(cursor.getDate()).padStart(2, "0");
+    cells.push(`${year}-${month}-${day}`);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return cells;
+}
+
+/**
+ * Return whether a JSON value has useful display content.
+ *
+ * Parameters:
+ *   value: Unknown JSON value from the plan payload.
+ *
+ * Returns:
+ *   boolean: `true` when the value should be rendered.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function hasDisplayValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  if (typeof value === "object") {
+    return Object.keys(value).length > 0;
+  }
+
+  return true;
+}
+
+/**
+ * Format a JSON object into compact human-readable text.
+ *
+ * Parameters:
+ *   value: Object-shaped JSON value.
+ *
+ * Returns:
+ *   string: Comma-separated key/value summary.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatJsonObject(value: Record<string, unknown>): string {
+  return Object.entries(value)
+    .filter(([, entryValue]) => hasDisplayValue(entryValue))
+    .map(([key, entryValue]) => `${formatMetricTypeLabel(key)}: ${formatJsonValue(entryValue)}`)
+    .join(", ");
+}
+
+/**
+ * Format one JSON value for a structured plan section.
+ *
+ * Parameters:
+ *   value: Unknown JSON value from a plan field.
+ *
+ * Returns:
+ *   string: Human-readable representation.
+ *
+ * Raises:
+ *   This helper does not raise errors directly.
+ */
+function formatJsonValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => formatJsonValue(item)).join(", ");
+  }
+
+  if (value && typeof value === "object") {
+    return formatJsonObject(value as Record<string, unknown>);
+  }
+
+  return "n/a";
 }
 
 /**

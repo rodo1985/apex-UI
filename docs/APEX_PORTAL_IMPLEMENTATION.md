@@ -8,6 +8,7 @@ MCP wellness backend. It gives the athlete a simple place to review:
 - the current day
 - recent logged days
 - longer-term trends in fuelling, training, and dynamic daily metrics
+- read-only food and training plans with planned-vs-actual comparison
 
 This repo intentionally does not recreate the full product workspace. The goal
 is a focused review surface that is easy to deploy, easy to understand, and
@@ -27,6 +28,8 @@ one website and quickly answer questions such as:
 - What did I eat and what training did I do?
 - What profile context and goals are currently stored?
 - Which reusable food products already exist in the catalog?
+- What food and training plan is currently drafted, approved, or published?
+- How did planned training and nutrition compare with actual logged outcomes?
 - Which previous days are worth reviewing?
 - Is my fuelling and training trend moving in the right direction?
 - How are custom daily metrics, such as sleep, changing over time?
@@ -45,9 +48,15 @@ flowchart LR
     User["Athlete opens portal"] --> Web["React frontend"]
     Web --> API["FastAPI read API"]
     API --> DB["Supabase / Postgres"]
+    API --> PlanAPI["Plan read endpoints"]
+    PlanAPI --> PlanTables["training_plans + training_plan_days"]
+    PlanAPI --> ActualTables["meals + activities + targets + daily_metrics"]
+    PlanTables --> PlanAPI
+    ActualTables --> PlanAPI
     DB --> API
+    PlanAPI --> API
     API --> Web
-    Web --> Views["Today, Profile, Food products, History, Trends"]
+    Web --> Views["Today, Profile, Food products, Plans, History, Trends"]
 ```
 
 ## Main Components
@@ -66,7 +75,8 @@ flowchart LR
   Interactive multi-series SVG chart with point tooltips for achieved versus
   target trend views.
 - `frontend/src/lib/api.ts`
-  Small fetch client for the backend endpoints, including the product catalog.
+  Small fetch client for the backend endpoints, including the product catalog
+  and food/training plan endpoints.
 
 ### Backend
 
@@ -93,6 +103,8 @@ The backend reads from these existing tables:
 - Optional dynamic trend metrics from `public.daily_metrics`, grouped by
   `metric_type` and filtered by `subject`, `metric_date`, and the selected
   trend window
+- Optional food and training plans from `public.training_plans` and
+  `public.training_plan_days`, filtered by the configured portal subject
 
 The portal does not write to those tables. It only aggregates and presents the
 data already stored by the MCP workflows.
@@ -140,6 +152,7 @@ The backend only exposes the reporting views the portal needs:
 - history summaries
 - trend series
 - dynamic daily metric series
+- plan headers, plan details, and plan comparisons
 
 That keeps the backend small and lowers the risk of drifting away from the
 authoritative MCP data model.
@@ -149,8 +162,30 @@ The current read-only routes are:
 - `/portal/bootstrap`
 - `/portal/day`
 - `/portal/products`
+- `/portal/plans`
+- `/portal/plans/{plan_id}`
+- `/portal/plans/{plan_id}/comparison`
 - `/portal/history`
 - `/portal/trends`
+
+### Read-only plan surface
+
+The Plans view intentionally does not call MCP tools from the browser and does
+not expose approval or publishing controls. The MCP backend remains responsible
+for creating draft plans, approving plans, and publishing approved nutrition
+targets into `daily_targets`.
+
+The portal reads plan headers and planned days directly, then computes a
+planned-vs-actual comparison from the same actual tables already used by Today,
+History, and Trends. Missing actual meals or activities are displayed as
+missing data rather than as plan failure.
+
+Out of scope for this portal version:
+
+- creating or editing plans
+- approving, publishing, archiving, or deleting plans
+- planned meal item editing
+- Intervals.icu planned-workout publishing
 
 ## Outputs
 
@@ -160,6 +195,11 @@ The user-facing outputs are:
 - a profile page with metrics and stored markdown documents in open-layout
   sections
 - a reusable food product table with usage counts, search, and sort controls
+- a plan list with lifecycle status, date range, and planned-day counts
+- a plan calendar with planned training, targets, fueling guidance, menu
+  guidance, and day notes
+- a planned-vs-actual comparison with totals, daily deltas, adherence bars,
+  meal/activity counts, and wellness metric context
 - a history list with current-versus-target nutrition chips for each logged day
 - a trends view showing longer-term evolution plus target overlays for food and
   macro metrics

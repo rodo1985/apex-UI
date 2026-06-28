@@ -29,6 +29,131 @@ const productsPayload = {
   ],
 };
 
+const planSummary = {
+  id: 1,
+  title: "Next week endurance block",
+  start_date: "2026-07-06",
+  end_date: "2026-07-12",
+  status: "published",
+  goal_markdown: "Lose weight while keeping long-run quality.",
+  rationale_markdown: "Estimated from similar long runs.",
+  notes_markdown: "Use conservative load estimates.",
+  generation_context: { source: "pytest" },
+  days_count: 1,
+  created_at: "2026-06-28T18:00:00+00:00",
+  updated_at: "2026-06-28T18:00:00+00:00",
+};
+
+const planDay = {
+  id: 10,
+  plan_id: 1,
+  plan_date: "2026-07-06",
+  day_type: "training",
+  title: "Long aerobic run",
+  training_summary: "2 hour easy run with steady fueling.",
+  primary_sport_type: "run",
+  planned_duration_seconds: 7200,
+  planned_distance_meters: 20000,
+  planned_elevation_gain_meters: 250,
+  planned_training_load: 120,
+  target_food_calories: 2800,
+  target_exercise_calories: 1200,
+  target_protein_g: 150,
+  target_carbs_g: 360,
+  target_fat_g: 75,
+  training_sessions: [
+    { sport_type: "run", duration_seconds: 7200, intensity: "easy" },
+  ],
+  fueling_plan: { during: "60 g carbs/hour" },
+  menu_plan: { breakfast: "oats and banana" },
+  notes_markdown: "Use conservative load estimate.",
+  created_at: "2026-06-28T18:00:00+00:00",
+  updated_at: "2026-06-28T18:00:00+00:00",
+};
+
+const plansPayload = {
+  items: [planSummary],
+};
+
+const planDetailPayload = {
+  ...planSummary,
+  days: [planDay],
+};
+
+const planComparisonPayload = {
+  plan: planSummary,
+  days_count: 1,
+  days: [
+    {
+      plan_date: "2026-07-06",
+      planned: planDay,
+      actual: {
+        target_date: "2026-07-06",
+        target_food_calories: 2800,
+        target_exercise_calories: 1200,
+        target_protein_g: 150,
+        target_carbs_g: 360,
+        target_fat_g: 75,
+        actual_food_calories: 0,
+        actual_exercise_calories: 0,
+        actual_protein_g: 0,
+        actual_carbs_g: 0,
+        actual_fat_g: 0,
+        remaining_food_calories: 2800,
+        remaining_protein_g: 150,
+        remaining_carbs_g: 360,
+        remaining_fat_g: 75,
+        net_calories: 0,
+        meals_count: 0,
+        meal_items_count: 0,
+        activities_count: 0,
+      },
+      daily_metrics: [
+        {
+          metric_date: "2026-07-06",
+          metric_type: "sleep_hours",
+          value: 7.5,
+        },
+      ],
+      deltas: {
+        food_calories: -2800,
+        exercise_calories: -1200,
+        protein_g: -150,
+        carbs_g: -360,
+        fat_g: -75,
+      },
+      adherence: {
+        food_calories_percent: 0,
+        exercise_calories_percent: 0,
+        protein_percent: 0,
+        carbs_percent: 0,
+        fat_percent: 0,
+        macro_average_percent: 0,
+      },
+    },
+  ],
+  totals: {
+    planned_food_calories: 2800,
+    actual_food_calories: 0,
+    planned_exercise_calories: 1200,
+    actual_exercise_calories: 0,
+    planned_protein_g: 150,
+    actual_protein_g: 0,
+    planned_carbs_g: 360,
+    actual_carbs_g: 0,
+    planned_fat_g: 75,
+    actual_fat_g: 0,
+    food_calories_delta: -2800,
+    exercise_calories_delta: -1200,
+    protein_g_delta: -150,
+    carbs_g_delta: -360,
+    fat_g_delta: -75,
+    food_calories_adherence_percent: 0,
+    exercise_calories_adherence_percent: 0,
+    days_count: 1,
+  },
+};
+
 /**
  * Build a bootstrap payload for one requested portal date.
  *
@@ -227,6 +352,30 @@ function mockPortalFetch() {
       };
     }
 
+    if (url.pathname.endsWith("/portal/plans")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => plansPayload,
+      };
+    }
+
+    if (url.pathname.endsWith("/portal/plans/1/comparison")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => planComparisonPayload,
+      };
+    }
+
+    if (url.pathname.endsWith("/portal/plans/1")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => planDetailPayload,
+      };
+    }
+
     throw new Error(`Unexpected fetch URL: ${rawUrl}`);
   });
 
@@ -323,6 +472,7 @@ describe("App", () => {
       "Today",
       "Trends",
       "Food products",
+      "Plans",
       "History",
       "Profile",
     ]);
@@ -357,6 +507,50 @@ describe("App", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("loads plans lazily and renders calendar plus comparison states", async () => {
+    const fetchMock = mockPortalFetch();
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Plans" })).toBeInTheDocument(),
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Plans" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByText("Next week endurance block").length,
+      ).toBeGreaterThan(0),
+    );
+    expect(await screen.findByText("Plan calendar")).toBeInTheDocument();
+    expect(screen.getByText("Long aerobic run")).toBeInTheDocument();
+    expect(screen.getByText("2 h 0 min")).toBeInTheDocument();
+
+    const dayCard = screen.getByText("Long aerobic run").closest("details");
+    expect(dayCard).not.toHaveAttribute("open");
+
+    await user.click(screen.getByText("Long aerobic run"));
+
+    expect(dayCard).toHaveAttribute("open");
+    expect(screen.getByText("60 g carbs/hour")).toBeInTheDocument();
+    expect(screen.getByText("oats and banana")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Comparison" }));
+
+    expect(screen.getByText("Food delta")).toBeInTheDocument();
+    expect(screen.getByText("Missing actuals")).toBeInTheDocument();
+    expect(screen.getByText("Sleep hours 7.5 h")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        url.toString().endsWith("/portal/plans/1/comparison"),
+      ),
+    ).toBe(true);
   });
 
   test("requests the new trend windows from the toolbar", async () => {
